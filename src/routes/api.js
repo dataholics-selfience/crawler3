@@ -1,17 +1,9 @@
 const express = require('express');
 const router = express.Router();
 
-// Ajuste os caminhos baseado em onde os arquivos realmente estão:
-
-// Se os arquivos estão na raiz do projeto:
-const InpiCrawler = require('../../inpi');
-const PatentScopeCrawler = require('../../patentscope');
-
-// Se os arquivos estão em /crawlers (sem src):
-// const InpiCrawler = require('../../crawlers/inpi');
-// const PatentScopeCrawler = require('../../crawlers/patentscope');
-
-// Se os arquivos estão em outro lugar, ajuste conforme necessário
+// IMPORTS CORRIGIDOS - Note o nome exato dos arquivos!
+const InpiCrawler = require('../crawlers/inpiCrawler');  // inpiCrawler com C maiúsculo
+const PatentScopeCrawler = require('../crawlers/patentscope');  // patentscope tudo minúsculo
 
 // INPI Route
 router.get('/inpi/patents', async (req, res) => {
