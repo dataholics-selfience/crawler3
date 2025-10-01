@@ -1,54 +1,128 @@
-const express = require('express');
-const router = express.Router();
-const { query, validationResult } = require('express-validator');
-const rateLimit = require('express-rate-limit');
+// No topo do arquivo, adicione o import do PatentScope junto com o INPI
+const InpiCrawler = require('../crawlers/inpi');
+const PatentScopeCrawler = require('../crawlers/patentscope'); // NOVA LINHA
 
-const INPICrawler = require('../crawlers/inpiCrawler');
-const logger = require('../utils/logger');
+// ... resto dos imports ...
 
-const dataLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 30,
-  message: { error: 'Too many requests. Try again in 1 minute.' }
+// Mantenha a rota INPI que já existe
+router.get('/data/inpi/patents', async (req, res) => {
+    // ... código existente do INPI ...
 });
 
-router.use(dataLimiter);
-
-router.get('/inpi/patents', [
-  query('medicine')
-    .notEmpty()
-    .withMessage('Medicine/molecule name is required')
-    .isLength({ min: 2, max: 100 })
-], async (req, res, next) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: errors.array()
-      });
+// ADICIONE a nova rota do PatentScope
+router.get('/data/patentscope/patents', async (req, res) => {
+    const { medicine } = req.query;
+    
+    if (!medicine) {
+        return res.status(400).json({
+            error: 'Medicine parameter is required',
+            example: '/api/data/patentscope/patents?medicine=semaglutide'
+        });
     }
-
-    const { medicine, page = 1, limit = 20, status, year } = req.query;
     
-    logger.info(`INPI API request: ${medicine}`);
-
-    const inpiCrawler = new INPICrawler();
-    const results = await inpiCrawler.searchPatents({
-      medicine,
-      page: parseInt(page),
-      limit: parseInt(limit),
-      status,
-      year: year ? parseInt(year) : null
-    });
+    const crawler = new PatentScopeCrawler();
     
-    res.json(results);
-    
-  } catch (error) {
-    logger.error('INPI API error:', error);
-    next(error);
-  }
+    try {
+        console.log(`Starting PatentScope search for: ${medicine}`);
+        await crawler.initialize();
+        
+        const patents = await crawler.searchPatents(medicine);
+        
+        const response = {
+            success: true,
+            query: medicine,
+            source: 'PatentScope (WIPO)',
+            totalResults: patents.length,
+            timestamp: new Date().toISOString(),
+            patents: patents
+        };
+        
+        res.json(response);
+    } catch (error) {
+        console.error('PatentScope crawler error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch PatentScope patents',
+            message: error.message
+        });
+    } finally {
+        await crawler.close();
+    }
 });
 
-module.exports = router;
+// ADICIONE a rota de comparação INPI vs PatentScope
+router.get('/data/compare/patents', async (req, res) => {
+    const { medicine } = req.query;
+    
+    if (!medicine) {
+        return res.status(400).json({
+            error: 'Medicine parameter is required',
+            example: '/api/data/compare/patents?medicine=semaglutide'
+        });
+    }
+    
+    const inpiCrawler = new InpiCrawler();
+    const patentscopeCrawler = new PatentScopeCrawler();
+    
+    try {
+        console.log(`Comparing patents for: ${medicine}`);
+        
+        // Executa ambas as buscas em paralelo
+        const [inpiResults, patentscopeResults] = await Promise.all([
+            (async () => {
+                try {
+                    await inpiCrawler.initialize();
+                    const results = await inpiCrawler.searchPatents(medicine);
+                    await inpiCrawler.close();
+                    return results;
+                } catch (err) {
+                    console.error('INPI search error:', err);
+                    return [];
+                }
+            })(),
+            (async () => {
+                try {
+                    await patentscopeCrawler.initialize();
+                    const results = await patentscopeCrawler.searchPatents(medicine);
+                    await patentscopeCrawler.close();
+                    return results;
+                } catch (err) {
+                    console.error('PatentScope search error:', err);
+                    return [];
+                }
+            })()
+        ]);
+        
+        res.json({
+            success: true,
+            query: medicine,
+            timestamp: new Date().toISOString(),
+            comparison: {
+                inpi: {
+                    source: 'INPI Brazil',
+                    totalResults: inpiResults.length,
+                    patents: inpiResults.slice(0, 20)
+                },
+                patentscope: {
+                    source: 'PatentScope (WIPO)',
+                    totalResults: patentscopeResults.length,
+                    patents: patentscopeResults.slice(0, 20)
+                }
+            },
+            summary: {
+                totalPatents: inpiResults.length + patentscopeResults.length,
+                inpiBrazil: inpiResults.length,
+                patentscopeInternational: patentscopeResults.length
+            }
+        });
+    } catch (error) {
+        console.error('Comparison error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to compare patents',
+            message: error.message
+        });
+    }
+});
+
+// ... resto do arquivo ...
