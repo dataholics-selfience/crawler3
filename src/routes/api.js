@@ -1,22 +1,53 @@
-// No topo do arquivo, adicione o import do PatentScope junto com o INPI
+const express = require('express');
+const router = express.Router();
 const InpiCrawler = require('../crawlers/inpi');
-const PatentScopeCrawler = require('../crawlers/patentscope'); // NOVA LINHA
+const PatentScopeCrawler = require('../crawlers/patentscope');
 
-// ... resto dos imports ...
-
-// Mantenha a rota INPI que já existe
-router.get('/data/inpi/patents', async (req, res) => {
-    // ... código existente do INPI ...
-});
-
-// ADICIONE a nova rota do PatentScope
-router.get('/data/patentscope/patents', async (req, res) => {
+// INPI Route
+router.get('/inpi/patents', async (req, res) => {
     const { medicine } = req.query;
     
     if (!medicine) {
         return res.status(400).json({
-            error: 'Medicine parameter is required',
-            example: '/api/data/patentscope/patents?medicine=semaglutide'
+            error: 'Medicine parameter is required'
+        });
+    }
+    
+    const crawler = new InpiCrawler();
+    
+    try {
+        await crawler.initialize();
+        const patents = await crawler.searchPatents(medicine);
+        
+        const response = {
+            success: true,
+            query: medicine,
+            source: 'INPI Brazil',
+            totalResults: patents.length,
+            timestamp: new Date().toISOString(),
+            patents: patents
+        };
+        
+        res.json(response);
+    } catch (error) {
+        console.error('INPI crawler error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch INPI patents',
+            message: error.message
+        });
+    } finally {
+        await crawler.close();
+    }
+});
+
+// PatentScope Route
+router.get('/patentscope/patents', async (req, res) => {
+    const { medicine } = req.query;
+    
+    if (!medicine) {
+        return res.status(400).json({
+            error: 'Medicine parameter is required'
         });
     }
     
@@ -50,14 +81,13 @@ router.get('/data/patentscope/patents', async (req, res) => {
     }
 });
 
-// ADICIONE a rota de comparação INPI vs PatentScope
-router.get('/data/compare/patents', async (req, res) => {
+// Compare Route
+router.get('/compare/patents', async (req, res) => {
     const { medicine } = req.query;
     
     if (!medicine) {
         return res.status(400).json({
-            error: 'Medicine parameter is required',
-            example: '/api/data/compare/patents?medicine=semaglutide'
+            error: 'Medicine parameter is required'
         });
     }
     
@@ -65,9 +95,6 @@ router.get('/data/compare/patents', async (req, res) => {
     const patentscopeCrawler = new PatentScopeCrawler();
     
     try {
-        console.log(`Comparing patents for: ${medicine}`);
-        
-        // Executa ambas as buscas em paralelo
         const [inpiResults, patentscopeResults] = await Promise.all([
             (async () => {
                 try {
@@ -125,4 +152,4 @@ router.get('/data/compare/patents', async (req, res) => {
     }
 });
 
-// ... resto do arquivo ...
+module.exports = router;
