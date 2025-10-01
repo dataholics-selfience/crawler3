@@ -153,3 +153,5 @@ router.get('/compare/patents', async (req, res) => {
 });
 
 module.exports = router;
+// Force rebuild - remove this comment later
+
