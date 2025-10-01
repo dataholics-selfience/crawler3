@@ -1,36 +1,19 @@
 const express = require('express');
 const router = express.Router();
-const InpiCrawler = require('../crawlers/inpi');
 
-// Debug: Tentar carregar PatentScope com tratamento de erro
-let PatentScopeCrawler;
-try {
-    PatentScopeCrawler = require('../crawlers/patentscope');
-    console.log('✅ PatentScopeCrawler loaded successfully');
-} catch (error) {
-    console.error('❌ Failed to load PatentScopeCrawler:', error.message);
-    console.error('Full error:', error);
-}
+// Ajuste os caminhos baseado em onde os arquivos realmente estão:
 
-// ROTA DE DEBUG - SUPER SIMPLES
-router.get('/debug', (req, res) => {
-    res.json({ 
-        message: 'Debug endpoint working',
-        timestamp: new Date().toISOString(),
-        patentScopeLoaded: !!PatentScopeCrawler
-    });
-});
+// Se os arquivos estão na raiz do projeto:
+const InpiCrawler = require('../../inpi');
+const PatentScopeCrawler = require('../../patentscope');
 
-// ROTA DE TESTE PARA PATENTSCOPE - SEM O CRAWLER
-router.get('/patentscope/test', (req, res) => {
-    res.json({ 
-        message: 'PatentScope test route working',
-        crawlerAvailable: !!PatentScopeCrawler,
-        timestamp: new Date().toISOString()
-    });
-});
+// Se os arquivos estão em /crawlers (sem src):
+// const InpiCrawler = require('../../crawlers/inpi');
+// const PatentScopeCrawler = require('../../crawlers/patentscope');
 
-// INPI Route (mantém como está)
+// Se os arquivos estão em outro lugar, ajuste conforme necessário
+
+// INPI Route
 router.get('/inpi/patents', async (req, res) => {
     const { medicine } = req.query;
     
@@ -68,19 +51,8 @@ router.get('/inpi/patents', async (req, res) => {
     }
 });
 
-// PatentScope Route - COM VERIFICAÇÃO
+// PatentScope Route
 router.get('/patentscope/patents', async (req, res) => {
-    console.log('🎯 PatentScope route hit!');
-    
-    // Verifica se o crawler foi carregado
-    if (!PatentScopeCrawler) {
-        return res.status(500).json({
-            success: false,
-            error: 'PatentScopeCrawler not loaded',
-            message: 'The PatentScope crawler module could not be loaded. Check server logs.'
-        });
-    }
-    
     const { medicine } = req.query;
     
     if (!medicine) {
@@ -121,14 +93,6 @@ router.get('/patentscope/patents', async (req, res) => {
 
 // Compare Route
 router.get('/compare/patents', async (req, res) => {
-    if (!PatentScopeCrawler) {
-        return res.status(500).json({
-            success: false,
-            error: 'PatentScopeCrawler not available',
-            message: 'Cannot compare without PatentScope crawler'
-        });
-    }
-    
     const { medicine } = req.query;
     
     if (!medicine) {
@@ -197,23 +161,5 @@ router.get('/compare/patents', async (req, res) => {
         });
     }
 });
-
-// Lista todas as rotas registradas
-router.get('/routes', (req, res) => {
-    const routes = router.stack
-        .filter(r => r.route)
-        .map(r => ({
-            path: r.route.path,
-            methods: Object.keys(r.route.methods)
-        }));
-    
-    res.json({ 
-        message: 'Available routes in API',
-        routes,
-        patentScopeModuleLoaded: !!PatentScopeCrawler
-    });
-});
-
-console.log('📍 API routes file loaded - version 2.0');
 
 module.exports = router;
