@@ -1,7 +1,7 @@
 {
   "name": "patent-crawler-platform",
   "version": "1.0.0",
-  "description": "Patent crawler platform with INPI and PatentScope integration",
+  "description": "A Node.js REST API platform for extracting and analyzing patent data from INPI with AI-powered HTML parsing using Groq",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,7 +11,9 @@
     "patents",
     "crawler",
     "inpi",
-    "patentscope"
+    "patentscope",
+    "groq",
+    "ai"
   ],
   "author": "",
   "license": "ISC",
@@ -20,8 +22,12 @@
     "cors": "^2.8.5",
     "helmet": "^7.0.0",
     "morgan": "^1.10.0",
+    "compression": "^1.7.4",
     "dotenv": "^16.3.1",
-    "puppeteer": "^21.0.0"
+    "puppeteer": "^21.0.0",
+    "winston": "^3.11.0",
+    "express-rate-limit": "^7.1.5",
+    "groq-sdk": "^0.3.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
