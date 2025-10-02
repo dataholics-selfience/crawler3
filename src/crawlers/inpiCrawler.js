@@ -1,145 +1,119 @@
 async searchPatents(medicine) {
-    console.log('Starting INPI patent search');
+    console.log('🔍 Starting INPI patent search for:', medicine);
     const page = await this.browser.newPage();
     
+    // Timeout global para toda a operação
+    const timeout = setTimeout(() => {
+      console.log('⏱️ Global timeout reached - closing page');
+      page.close().catch(() => {});
+    }, 45000); // 45 segundos no máximo
+    
     try {
-      const searchUrl = 'https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchBasico.jsp';
-      console.log('Navigating to:', searchUrl);
-      
-      // Interceptar logs do console da página
-      page.on('console', msg => console.log('PAGE LOG:', msg.text()));
-      
-      await page.goto(searchUrl, { 
-        waitUntil: 'networkidle2',
-        timeout: 30000 
+      // Desabilitar imagens e recursos desnecessários para acelerar
+      await page.setRequestInterception(true);
+      page.on('request', (req) => {
+        if(['image', 'stylesheet', 'font'].includes(req.resourceType())){
+          req.abort();
+        } else {
+          req.continue();
+        }
       });
       
-      console.log('Current URL after navigation:', page.url());
+      const searchUrl = 'https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchBasico.jsp';
+      console.log('📡 Navigating to INPI...');
       
-      // Verificar se há redirecionamento para login
-      if (page.url().includes('login') || page.url().includes('Login')) {
-        console.log('⚠️ Detected login page - attempting to bypass');
-        // Tentar voltar para a página de busca
-        await page.goto(searchUrl, { 
-          waitUntil: 'networkidle2',
-          timeout: 30000 
+      await page.goto(searchUrl, { 
+        waitUntil: 'domcontentloaded',
+        timeout: 15000 
+      });
+      
+      console.log('✅ Page loaded:', page.url());
+      await page.waitForTimeout(2000);
+      
+      // Verificar se é página de login
+      const content = await page.content();
+      if (content.includes('Login:') && content.includes('Senha:')) {
+        console.log('❌ Login page detected');
+        throw new Error('INPI requires authentication');
+      }
+      
+      // Buscar campo de entrada de forma simples
+      console.log('🔍 Looking for search input...');
+      const inputFound = await page.evaluate(() => {
+        const inputs = Array.from(document.querySelectorAll('input[type="text"]'));
+        const searchInput = inputs.find(input => {
+          const name = (input.name || '').toLowerCase();
+          const id = (input.id || '').toLowerCase();
+          return !name.includes('login') && !name.includes('senha') && !name.includes('password');
         });
-      }
-      
-      // Aguardar o formulário de busca carregar
-      await page.waitForTimeout(3000);
-      
-      // Verificar o HTML da página para debug
-      const pageContent = await page.content();
-      console.log('Page has login form?', pageContent.includes('Login:') || pageContent.includes('Senha:'));
-      
-      // Se ainda estiver na página de login, retornar erro específico
-      if (pageContent.includes('Login:') && pageContent.includes('Senha:')) {
-        throw new Error('INPI site requires authentication. Cannot proceed with search.');
-      }
-      
-      // Tentar diferentes seletores para o campo de busca
-      const selectors = [
-        'input[name="palavra"]',
-        'input[name="Palavra"]',
-        'input[id*="palavra"]',
-        'input[type="text"][name*="palavra"]',
-        'input[type="text"]'
-      ];
-      
-      let searchInput = null;
-      let usedSelector = null;
-      
-      for (const selector of selectors) {
-        console.log('Trying selector:', selector);
-        searchInput = await page.$(selector);
+        
         if (searchInput) {
-          // Verificar se não é um campo de login
-          const inputName = await page.evaluate(el => el.name || el.id, searchInput);
-          if (!inputName.toLowerCase().includes('login') && 
-              !inputName.toLowerCase().includes('senha') && 
-              !inputName.toLowerCase().includes('password')) {
-            usedSelector = selector;
-            console.log('✅ Found search input with selector:', selector);
-            break;
-          }
+          searchInput.focus();
+          return true;
         }
+        return false;
+      });
+      
+      if (!inputFound) {
+        throw new Error('Search input not found');
       }
       
-      if (!searchInput) {
-        throw new Error('Search input not found - page may require authentication');
-      }
+      console.log('⌨️ Typing search term...');
+      await page.keyboard.type(medicine, { delay: 50 });
+      await page.waitForTimeout(500);
       
-      await searchInput.type(medicine, { delay: 100 });
-      console.log('Typed search term:', medicine);
-      
-      // Buscar botão de submit que não seja de login
-      const submitButtons = await page.$$('input[type="submit"], button[type="submit"]');
-      let searchButton = null;
-      
-      for (const button of submitButtons) {
-        const buttonValue = await page.evaluate(el => 
-          el.value || el.innerText || el.textContent, button
-        );
-        if (buttonValue && !buttonValue.toLowerCase().includes('entrar') && 
-            !buttonValue.toLowerCase().includes('login')) {
-          searchButton = button;
-          console.log('Found search button:', buttonValue);
-          break;
+      console.log('🔘 Looking for submit button...');
+      const buttonClicked = await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('input[type="submit"], button[type="submit"]'));
+        const searchButton = buttons.find(btn => {
+          const value = (btn.value || btn.textContent || '').toLowerCase();
+          return !value.includes('entrar') && !value.includes('login');
+        });
+        
+        if (searchButton) {
+          searchButton.click();
+          return true;
         }
+        return false;
+      });
+      
+      if (!buttonClicked) {
+        throw new Error('Submit button not found');
       }
       
-      if (!searchButton) {
-        throw new Error('Search button not found');
-      }
+      console.log('⏳ Waiting for results...');
+      await page.waitForNavigation({ 
+        waitUntil: 'domcontentloaded',
+        timeout: 15000 
+      }).catch(() => console.log('Navigation timeout - continuing anyway'));
       
-      await Promise.all([
-        page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
-        searchButton.click()
-      ]);
+      await page.waitForTimeout(2000);
       
-      // Aguardar resultados
-      await page.waitForTimeout(3000);
-      
-      // Verificar se ainda está em página de login após submit
-      const finalUrl = page.url();
-      console.log('Final URL after search:', finalUrl);
-      
-      if (finalUrl.includes('login') || finalUrl.includes('Login')) {
-        throw new Error('Search redirected to login page - authentication required');
-      }
-      
-      // Extrair resultados
+      console.log('📊 Extracting results...');
       const patents = await page.evaluate(() => {
         const results = [];
+        const rows = document.querySelectorAll('table tr');
         
-        // Tentar diferentes estruturas de tabela
-        const tables = document.querySelectorAll('table');
-        
-        tables.forEach(table => {
-          const rows = table.querySelectorAll('tr');
-          
-          rows.forEach(row => {
-            const cells = row.querySelectorAll('td');
-            if (cells.length >= 3) {
-              const text = row.innerText.trim();
-              // Filtrar linhas que parecem ser de login
-              if (!text.includes('Login:') && !text.includes('Senha:')) {
-                results.push({
-                  processNumber: cells[0]?.innerText?.trim() || '',
-                  title: cells[1]?.innerText?.trim() || '',
-                  depositDate: cells[2]?.innerText?.trim() || '',
-                  fullText: text
-                });
-              }
+        rows.forEach(row => {
+          const cells = row.querySelectorAll('td');
+          if (cells.length >= 3) {
+            const text = row.innerText || '';
+            if (!text.includes('Login:') && !text.includes('Senha:') && text.trim()) {
+              results.push({
+                processNumber: cells[0]?.innerText?.trim() || '',
+                title: cells[1]?.innerText?.trim() || '',
+                depositDate: cells[2]?.innerText?.trim() || '',
+                fullText: text.trim()
+              });
             }
-          });
+          }
         });
         
         return results;
       });
       
-      console.log('INPI patent search completed. Found', patents.length, 'patents');
+      console.log('✅ Found', patents.length, 'patents');
+      clearTimeout(timeout);
       
       return patents.map(p => ({
         ...p,
@@ -147,9 +121,11 @@ async searchPatents(medicine) {
       }));
       
     } catch (error) {
-      console.error('Error in INPI search:', error.message);
+      clearTimeout(timeout);
+      console.error('❌ INPI search error:', error.message);
       throw error;
     } finally {
-      await page.close();
+      await page.close().catch(() => {});
+      console.log('🔒 Page closed');
     }
   }
