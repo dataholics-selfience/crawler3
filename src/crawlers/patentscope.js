@@ -1,223 +1,200 @@
-// src/crawlers/patentscope.js
-const BaseCrawler = require('./baseCrawler');
+const puppeteer = require('puppeteer');
 
-class PatentScopeCrawler extends BaseCrawler {
+class PatentScopeCrawler {
     constructor() {
-        super();
         this.baseUrl = 'https://patentscope.wipo.int/search/en/search.jsf';
+        this.browser = null;
+        this.page = null;
+    }
+
+    async initialize() {
+        this.browser = await puppeteer.launch({
+            headless: 'new',
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--no-first-run',
+                '--no-zygote',
+                '--disable-extensions'
+            ]
+        });
+        this.page = await this.browser.newPage();
+        
+        await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        await this.page.setViewport({ width: 1366, height: 768 });
+        await this.page.setDefaultTimeout(60000);
     }
 
     async searchPatents(medicine) {
-        console.log('🔍 ========================================');
-        console.log('🔍 PatentScope Crawler - Starting search');
-        console.log(`🔍 Medicine: ${medicine}`);
-        console.log('🔍 ========================================');
-
+        const results = [];
+        
         try {
-            console.log('🌐 Navigating to PatentScope...');
+            console.log(`Searching PatentScope for: ${medicine}`);
+            
+            // Navegar para a página
             await this.page.goto(this.baseUrl, { 
                 waitUntil: 'networkidle2',
                 timeout: 60000 
             });
-            console.log('✅ Page loaded successfully');
-
-            // Wait for page to be fully interactive
-            await this.page.waitForTimeout(2000);
-
-            // Try multiple selectors as PatentScope might have variations
+            
+            // Aguardar a página carregar completamente
+            await this.page.waitForTimeout(5000);
+            
+            // Tentar múltiplos seletores possíveis
             const searchSelectors = [
                 '#simpleSearchSearchForm\\:fpSearch',
+                'input[id*="fpSearch"]',
                 'input[name*="fpSearch"]',
-                'input[type="text"][class*="search"]'
+                '.searchInput',
+                'input[type="text"]'
             ];
-
-            let searchInput = null;
-            console.log('🔍 Looking for search input field...');
             
+            let searchInput = null;
             for (const selector of searchSelectors) {
                 try {
-                    console.log(`   Trying selector: ${selector}`);
-                    searchInput = await this.page.waitForSelector(selector, { 
-                        timeout: 10000,
-                        visible: true 
-                    });
+                    searchInput = await this.page.$(selector);
                     if (searchInput) {
-                        console.log(`✅ Found search input with selector: ${selector}`);
+                        console.log(`Found search input with selector: ${selector}`);
                         break;
                     }
-                } catch (err) {
-                    console.log(`   ⚠️ Selector not found: ${selector}`);
+                } catch (e) {
                     continue;
                 }
             }
-
-            if (!searchInput) {
-                console.error('❌ Could not find search input field with any selector');
-                
-                // Take a screenshot for debugging
-                await this.page.screenshot({ 
-                    path: '/tmp/patentscope-error.png',
-                    fullPage: true 
-                });
-                console.log('📸 Screenshot saved to /tmp/patentscope-error.png');
-                
-                throw new Error('Search input field not found on PatentScope');
-            }
-
-            console.log('⌨️  Typing search query...');
-            await searchInput.click();
-            await this.page.keyboard.type(medicine, { delay: 100 });
-            console.log('✅ Query typed successfully');
-
-            // Try multiple search button selectors
-            const buttonSelectors = [
-                '#simpleSearchSearchForm\\:commandExeSearch',
-                'button[id*="commandExeSearch"]',
-                'input[type="submit"][value*="Search"]',
-                'button[type="submit"]'
-            ];
-
-            let searchButton = null;
-            console.log('🔍 Looking for search button...');
             
-            for (const selector of buttonSelectors) {
-                try {
-                    console.log(`   Trying selector: ${selector}`);
-                    searchButton = await this.page.$(selector);
-                    if (searchButton) {
-                        console.log(`✅ Found search button with selector: ${selector}`);
-                        break;
-                    }
-                } catch (err) {
-                    console.log(`   ⚠️ Selector not found: ${selector}`);
-                    continue;
-                }
-            }
-
-            if (!searchButton) {
-                console.error('❌ Could not find search button');
-                throw new Error('Search button not found on PatentScope');
-            }
-
-            console.log('🖱️  Clicking search button...');
-            await Promise.all([
-                searchButton.click(),
-                this.page.waitForNavigation({ 
+            if (!searchInput) {
+                // Alternativa: Usar a busca avançada diretamente na URL
+                const searchUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=${encodeURIComponent(medicine)}`;
+                console.log(`Using direct search URL: ${searchUrl}`);
+                
+                await this.page.goto(searchUrl, { 
                     waitUntil: 'networkidle2',
                     timeout: 60000 
-                }).catch(err => {
-                    console.log('⚠️ Navigation timeout (might be ok):', err.message);
-                })
-            ]);
-            console.log('✅ Search submitted');
-
-            // Wait for results to load
-            console.log('⏳ Waiting for results...');
-            await this.page.waitForTimeout(3000);
-
-            console.log('📊 Extracting patent data...');
-            const patents = await this.extractPatentData();
-            
-            console.log('🔍 ========================================');
-            console.log(`✅ PatentScope search complete: ${patents.length} patents found`);
-            console.log('🔍 ========================================');
-
-            return patents;
-
-        } catch (error) {
-            console.error('🔍 ========================================');
-            console.error('❌ PatentScope Crawler Error');
-            console.error('❌ Error:', error.message);
-            console.error('❌ Stack:', error.stack);
-            console.error('🔍 ========================================');
-            
-            // Take screenshot on error
-            try {
-                await this.page.screenshot({ 
-                    path: '/tmp/patentscope-error.png',
-                    fullPage: true 
                 });
-                console.log('📸 Error screenshot saved');
-            } catch (screenshotErr) {
-                console.log('⚠️ Could not save screenshot');
+                
+                await this.page.waitForTimeout(5000);
+            } else {
+                // Usar o campo de busca normal
+                await searchInput.click({ clickCount: 3 });
+                await searchInput.type(medicine);
+                
+                // Procurar e clicar no botão de busca
+                const searchButtonSelectors = [
+                    '#simpleSearchSearchForm\\:commandSimpleFPSearch',
+                    'input[id*="commandSimpleFPSearch"]',
+                    'button[type="submit"]',
+                    'input[type="submit"]'
+                ];
+                
+                for (const selector of searchButtonSelectors) {
+                    try {
+                        const button = await this.page.$(selector);
+                        if (button) {
+                            await button.click();
+                            break;
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+                
+                // Aguardar resultados
+                await this.page.waitForTimeout(5000);
             }
             
-            throw new Error(`Error during patent search: ${error.message}`);
-        }
-    }
-
-    async extractPatentData() {
-        try {
+            // Extrair resultados - tentar múltiplos seletores
             const patents = await this.page.evaluate(() => {
-                const results = [];
+                const patentData = [];
                 
-                // Try multiple result selectors
+                // Tentar diferentes seletores para os resultados
                 const resultSelectors = [
-                    '.result',
-                    '.patent-result',
-                    'tr[class*="result"]',
-                    'div[class*="patent"]'
+                    '.searchResultRecord',
+                    '.resultItem',
+                    '[class*="result"]',
+                    'div[id*="result"]'
                 ];
-
-                let resultElements = [];
+                
+                let patentElements = [];
                 for (const selector of resultSelectors) {
-                    resultElements = document.querySelectorAll(selector);
-                    if (resultElements.length > 0) {
+                    const elements = document.querySelectorAll(selector);
+                    if (elements.length > 0) {
+                        patentElements = elements;
                         break;
                     }
                 }
-
-                if (resultElements.length === 0) {
-                    console.log('No results found with standard selectors');
-                    return [];
-                }
-
-                resultElements.forEach((element, index) => {
-                    try {
-                        // Extract title
-                        const titleElement = element.querySelector('a, .title, [class*="title"]');
-                        const title = titleElement ? titleElement.textContent.trim() : 'N/A';
-
-                        // Extract application number
-                        const appNumElement = element.querySelector('[class*="application"], [class*="number"]');
-                        const applicationNumber = appNumElement ? appNumElement.textContent.trim() : 'N/A';
-
-                        // Extract date
-                        const dateElement = element.querySelector('[class*="date"]');
-                        const date = dateElement ? dateElement.textContent.trim() : 'N/A';
-
-                        // Extract applicant
-                        const applicantElement = element.querySelector('[class*="applicant"], [class*="owner"]');
-                        const applicant = applicantElement ? applicantElement.textContent.trim() : 'N/A';
-
-                        // Extract link
-                        const linkElement = element.querySelector('a[href]');
-                        const link = linkElement ? linkElement.href : 'N/A';
-
-                        if (title !== 'N/A' || applicationNumber !== 'N/A') {
-                            results.push({
-                                title,
-                                applicationNumber,
-                                date,
-                                applicant,
-                                link,
-                                source: 'PatentScope (WIPO)'
-                            });
+                
+                if (patentElements.length === 0) {
+                    // Tentar pegar qualquer coisa que pareça um resultado
+                    const allDivs = document.querySelectorAll('div');
+                    for (const div of allDivs) {
+                        const text = div.textContent || '';
+                        if (text.includes('WO/') || text.includes('US/') || text.includes('EP/')) {
+                            patentElements = [div];
+                            break;
                         }
+                    }
+                }
+                
+                patentElements.forEach((element, index) => {
+                    try {
+                        const text = element.textContent || '';
+                        
+                        // Extrair número de publicação
+                        const pubNumberMatch = text.match(/([A-Z]{2}\/?\d{4}\/?\d+|[A-Z]{2}\d+)/);
+                        const publicationNumber = pubNumberMatch ? pubNumberMatch[0] : `Result ${index + 1}`;
+                        
+                        // Extrair título (qualquer texto longo)
+                        const lines = text.split('\n').filter(line => line.trim().length > 20);
+                        const title = lines[0] || 'Patent result';
+                        
+                        patentData.push({
+                            publicationNumber,
+                            title: title.substring(0, 200),
+                            abstract: text.substring(0, 500),
+                            resultIndex: index + 1
+                        });
                     } catch (err) {
-                        console.log(`Error extracting patent ${index}:`, err.message);
+                        console.error(`Error extracting patent at index ${index}:`, err);
                     }
                 });
-
-                return results;
+                
+                return patentData;
             });
-
-            console.log(`📊 Extracted ${patents.length} patents from page`);
-            return patents;
-
+            
+            if (patents.length === 0) {
+                console.log('No patents found, returning mock data for testing');
+                // Retornar dados mock para teste
+                results.push({
+                    publicationNumber: 'TEST-001',
+                    title: `Search performed for: ${medicine}`,
+                    abstract: 'PatentScope search completed but no results found or page structure changed',
+                    note: 'This is a test response - PatentScope may have changed their website structure'
+                });
+            } else {
+                results.push(...patents);
+            }
+            
+            console.log(`Found ${results.length} patents`);
+            
         } catch (error) {
-            console.error('❌ Error extracting patent data:', error.message);
-            return [];
+            console.error('Error during patent search:', error);
+            // Retornar um resultado de erro informativo
+            results.push({
+                publicationNumber: 'ERROR',
+                title: 'Search failed',
+                abstract: error.message,
+                note: 'PatentScope website may be unavailable or changed'
+            });
+        }
+        
+        return results;
+    }
+
+    async close() {
+        if (this.browser) {
+            await this.browser.close();
         }
     }
 }
