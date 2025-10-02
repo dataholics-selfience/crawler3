@@ -1,6 +1,19 @@
 const express = require('express');
 const router = express.Router();
 
+console.log('🔍 Loading api.js routes...');
+
+const InpiCrawler = require('../crawlers/inpiCrawler');
+console.log('✓ InpiCrawler loaded');
+
+const PatentScopeCrawler = require('../crawlers/patentscope');
+console.log('✓ PatentScopeCrawler loaded');
+
+// ... resto do código
+
+const express = require('express');
+const router = express.Router();
+
 // IMPORTS CORRIGIDOS - Note o nome exato dos arquivos!
 const InpiCrawler = require('../crawlers/inpiCrawler');  // inpiCrawler com C maiúsculo
 const PatentScopeCrawler = require('../crawlers/patentscope');  // patentscope tudo minúsculo
