@@ -1,4 +1,27 @@
-async searchPatents(medicine) {
+const puppeteer = require('puppeteer');
+
+class InpiCrawler {
+  constructor() {
+    this.browser = null;
+  }
+
+  async initialize() {
+    console.log('🔍 Initializing INPI crawler');
+    this.browser = await puppeteer.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu',
+        '--window-size=1920x1080'
+      ]
+    });
+    console.log('✅ INPI crawler initialized');
+  }
+
+  async searchPatents(medicine) {
     console.log('🔍 Starting INPI patent search for:', medicine);
     const page = await this.browser.newPage();
     
@@ -129,3 +152,13 @@ async searchPatents(medicine) {
       console.log('🔒 Page closed');
     }
   }
+
+  async close() {
+    if (this.browser) {
+      await this.browser.close();
+      console.log('🔒 INPI crawler closed');
+    }
+  }
+}
+
+module.exports = InpiCrawler;
