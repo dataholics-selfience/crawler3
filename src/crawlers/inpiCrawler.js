@@ -1,3 +1,77 @@
+async login(page) {
+  try {
+    console.log('🔐 Attempting to login to INPI...');
+    
+    const loginUrl = 'https://busca.inpi.gov.br/pePI/servlet/LoginController?action=login';
+    await page.goto(loginUrl, { 
+      waitUntil: 'networkidle0',
+      timeout: 30000 
+    });
+    
+    await page.waitForTimeout(3000);
+    
+    const currentUrl = page.url();
+    console.log('📍 Current URL:', currentUrl);
+    
+    const htmlSnippet = await page.evaluate(() => {
+      return document.body.innerHTML.substring(0, 500);
+    });
+    console.log('📄 Page HTML snippet:', htmlSnippet);
+    
+    const allInputs = await page.evaluate(() => {
+      const inputs = Array.from(document.querySelectorAll('input'));
+      return inputs.map(input => ({
+        type: input.type,
+        name: input.name,
+        id: input.id,
+        placeholder: input.placeholder
+      }));
+    });
+    console.log('📋 All inputs found:', JSON.stringify(allInputs));
+    
+    const hasLoginForm = await page.evaluate(() => {
+      const loginInput = document.querySelector('input[name="login"]');
+      const senhaInput = document.querySelector('input[name="senha"]');
+      return !!(loginInput && senhaInput);
+    });
+    
+    console.log('🔍 Login form found:', hasLoginForm);
+    
+    if (!hasLoginForm) {
+      throw new Error('Login form not found - check logs for page details');
+    }
+    
+    await page.type('input[name="login"]', this.credentials.username, { delay: 100 });
+    await page.type('input[name="senha"]', this.credentials.password, { delay: 100 });
+    
+    console.log('🔘 Clicking login button...');
+    
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }),
+      page.click('input[type="submit"]')
+    ]);
+    
+    await page.waitForTimeout(5000);
+    
+    const finalUrl = page.url();
+    console.log('📍 After login URL:', finalUrl);
+    
+    const content = await page.content();
+    if (finalUrl.includes('login') || finalUrl.includes('Login') || 
+        content.includes('Login:') || content.includes('Senha:')) {
+      throw new Error('Login failed - credentials may be incorrect');
+    }
+    
+    this.cookies = await page.cookies();
+    console.log('✅ Login successful, cookies saved');
+    return true;
+    
+  } catch (error) {
+    console.error('❌ Login failed:', error.message);
+    throw error;
+  }
+}
+
 const puppeteer = require('puppeteer');
 
 class InpiCrawler {
