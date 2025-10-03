@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "postinstall": "echo 'Puppeteer installed successfully'"
   },
   "keywords": [
     "patents",
@@ -24,7 +25,7 @@
     "morgan": "^1.10.0",
     "compression": "^1.7.4",
     "dotenv": "^16.3.1",
-    "puppeteer-core": "^21.0.0",
+    "puppeteer": "19.11.1",
     "winston": "^3.11.0",
     "express-rate-limit": "^7.1.5",
     "groq-sdk": "^0.3.0"
