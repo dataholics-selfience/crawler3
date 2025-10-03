@@ -5,44 +5,37 @@ console.log('🔍 ========================================');
 console.log('🔍 API Routes - Starting to load...');
 console.log('🔍 ========================================');
 
-// Test InpiCrawler loading
+// Load crawlers
 let InpiCrawler;
 try {
     InpiCrawler = require('../crawlers/inpiCrawler');
     console.log('✅ InpiCrawler loaded successfully');
-    console.log('   Type:', typeof InpiCrawler);
 } catch (error) {
     console.error('❌ Error loading InpiCrawler:', error.message);
-    console.error('   Stack:', error.stack);
 }
 
-// Test PatentScopeCrawler loading
 let PatentScopeCrawler;
 try {
     PatentScopeCrawler = require('../crawlers/patentscope');
     console.log('✅ PatentScopeCrawler loaded successfully');
-    console.log('   Type:', typeof PatentScopeCrawler);
 } catch (error) {
     console.error('❌ Error loading PatentScopeCrawler:', error.message);
-    console.error('   Stack:', error.stack);
 }
 
 console.log('🔍 ========================================');
 console.log('🔍 Registering routes...');
 console.log('🔍 ========================================');
 
-// INPI Route
+// INPI Route - Simple version without authentication
 router.get('/inpi/patents', async (req, res) => {
-    console.log('📍 ========================================');
     console.log('📍 INPI route called');
     console.log('📍 Query params:', req.query);
-    console.log('📍 ========================================');
     
     const { medicine } = req.query;
     
     if (!medicine) {
-        console.log('⚠️  Missing medicine parameter');
         return res.status(400).json({
+            success: false,
             error: 'Medicine parameter is required'
         });
     }
@@ -50,27 +43,23 @@ router.get('/inpi/patents', async (req, res) => {
     const crawler = new InpiCrawler();
     
     try {
-        console.log(`🔍 Initializing INPI crawler for: ${medicine}`);
+        console.log('Initializing INPI crawler for:', medicine);
         await crawler.initialize();
-        console.log('✅ INPI crawler initialized');
         
-        console.log('🔍 Searching INPI patents...');
+        console.log('Searching INPI patents...');
         const patents = await crawler.searchPatents(medicine);
-        console.log(`✅ Found ${patents.length} INPI patents`);
+        console.log('Found', patents.length, 'INPI patents');
         
-        const response = {
+        res.json({
             success: true,
             query: medicine,
             source: 'INPI Brazil',
             totalResults: patents.length,
             timestamp: new Date().toISOString(),
-            patents: patents
-        };
-        
-        res.json(response);
+            patents
+        });
     } catch (error) {
-        console.error('❌ INPI crawler error:', error.message);
-        console.error('   Stack:', error.stack);
+        console.error('INPI crawler error:', error.message);
         res.status(500).json({
             success: false,
             error: 'Failed to fetch INPI patents',
@@ -78,59 +67,49 @@ router.get('/inpi/patents', async (req, res) => {
         });
     } finally {
         await crawler.close();
-        console.log('🔒 INPI crawler closed');
     }
 });
 
 // PatentScope Route
 router.get('/patentscope/patents', async (req, res) => {
-    console.log('📍 ========================================');
     console.log('📍 PatentScope route called');
     console.log('📍 Query params:', req.query);
-    console.log('📍 ========================================');
     
     const { medicine } = req.query;
     
     if (!medicine) {
-        console.log('⚠️  Missing medicine parameter');
         return res.status(400).json({
             error: 'Medicine parameter is required'
         });
     }
     
     if (!PatentScopeCrawler) {
-        console.error('❌ PatentScopeCrawler not loaded!');
         return res.status(500).json({
             success: false,
-            error: 'PatentScope crawler not available',
-            message: 'Failed to load PatentScope crawler module'
+            error: 'PatentScope crawler not available'
         });
     }
     
     const crawler = new PatentScopeCrawler();
     
     try {
-        console.log(`🔍 Starting PatentScope search for: ${medicine}`);
+        console.log('Starting PatentScope search for:', medicine);
         await crawler.initialize();
-        console.log('✅ PatentScope crawler initialized');
         
-        console.log('🔍 Searching PatentScope patents...');
+        console.log('Searching PatentScope patents...');
         const patents = await crawler.searchPatents(medicine);
-        console.log(`✅ Found ${patents.length} PatentScope patents`);
+        console.log('Found', patents.length, 'PatentScope patents');
         
-        const response = {
+        res.json({
             success: true,
             query: medicine,
             source: 'PatentScope (WIPO)',
             totalResults: patents.length,
             timestamp: new Date().toISOString(),
-            patents: patents
-        };
-        
-        res.json(response);
+            patents
+        });
     } catch (error) {
-        console.error('❌ PatentScope crawler error:', error.message);
-        console.error('   Stack:', error.stack);
+        console.error('PatentScope crawler error:', error.message);
         res.status(500).json({
             success: false,
             error: 'Failed to fetch PatentScope patents',
@@ -138,21 +117,17 @@ router.get('/patentscope/patents', async (req, res) => {
         });
     } finally {
         await crawler.close();
-        console.log('🔒 PatentScope crawler closed');
     }
 });
 
 // Compare Route
 router.get('/compare/patents', async (req, res) => {
-    console.log('📍 ========================================');
     console.log('📍 Compare route called');
     console.log('📍 Query params:', req.query);
-    console.log('📍 ========================================');
     
     const { medicine } = req.query;
     
     if (!medicine) {
-        console.log('⚠️  Missing medicine parameter');
         return res.status(400).json({
             error: 'Medicine parameter is required'
         });
@@ -162,37 +137,31 @@ router.get('/compare/patents', async (req, res) => {
     const patentscopeCrawler = new PatentScopeCrawler();
     
     try {
-        console.log('🔍 Starting comparison search...');
+        console.log('Starting comparison search...');
         const [inpiResults, patentscopeResults] = await Promise.all([
             (async () => {
                 try {
-                    console.log('🔍 INPI comparison search starting...');
                     await inpiCrawler.initialize();
                     const results = await inpiCrawler.searchPatents(medicine);
                     await inpiCrawler.close();
-                    console.log(`✅ INPI comparison: ${results.length} results`);
                     return results;
                 } catch (err) {
-                    console.error('❌ INPI comparison search error:', err.message);
+                    console.error('INPI comparison error:', err.message);
                     return [];
                 }
             })(),
             (async () => {
                 try {
-                    console.log('🔍 PatentScope comparison search starting...');
                     await patentscopeCrawler.initialize();
                     const results = await patentscopeCrawler.searchPatents(medicine);
                     await patentscopeCrawler.close();
-                    console.log(`✅ PatentScope comparison: ${results.length} results`);
                     return results;
                 } catch (err) {
-                    console.error('❌ PatentScope comparison search error:', err.message);
+                    console.error('PatentScope comparison error:', err.message);
                     return [];
                 }
             })()
         ]);
-        
-        console.log('✅ Comparison complete');
         
         res.json({
             success: true,
@@ -217,8 +186,7 @@ router.get('/compare/patents', async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('❌ Comparison error:', error.message);
-        console.error('   Stack:', error.stack);
+        console.error('Comparison error:', error.message);
         res.status(500).json({
             success: false,
             error: 'Failed to compare patents',
@@ -233,30 +201,5 @@ console.log('✅ Route /compare/patents registered');
 console.log('🔍 ========================================');
 console.log('✅ All routes registered successfully');
 console.log('🔍 ========================================');
-
-// Test INPI without login
-router.get('/inpi/test', async (req, res) => {
-  const InpiCrawlerSimple = require('../crawlers/inpiCrawlerSimple');
-  const { medicine = 'insulina' } = req.query;
-  
-  const crawler = new InpiCrawlerSimple();
-  
-  try {
-    await crawler.initialize();
-    const result = await crawler.searchPatents(medicine);
-    
-    res.json({
-      success: true,
-      testResult: result
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  } finally {
-    await crawler.close();
-  }
-});
 
 module.exports = router;
