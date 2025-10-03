@@ -1,4 +1,4 @@
-const puppeteer = require('puppeteer-core');
+const puppeteer = require('puppeteer');
 
 class InpiCrawler {
   constructor(credentials = null) {
@@ -6,47 +6,71 @@ class InpiCrawler {
     this.credentials = credentials;
   }
 
-async initialize() {
-  console.log('🔍 Initializing INPI crawler');
-  
-  // Testar múltiplos caminhos possíveis do Chrome
-  const possiblePaths = [
-    process.env.PUPPETEER_EXECUTABLE_PATH,
-    '/usr/bin/google-chrome-stable',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/chromium',
-    'google-chrome-stable',
-    'chromium-browser'
-  ].filter(Boolean);
-  
-  let lastError;
-  
-  for (const executablePath of possiblePaths) {
+  async initialize() {
+    console.log('🔍 Initializing INPI crawler');
+    this.browser = await puppeteer.launch({
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu',
+        '--window-size=1920x1080'
+      ]
+    });
+    console.log('✅ INPI crawler initialized');
+  }
+
+  async login(page) {
     try {
-      console.log(`Trying Chrome at: ${executablePath}`);
-      this.browser = await puppeteer.launch({
-        headless: 'new',
-        executablePath,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--disable-gpu',
-          '--window-size=1920x1080'
-        ]
+      console.log('🔐 Attempting to login to INPI...');
+      
+      const loginUrl = 'https://busca.inpi.gov.br/pePI/servlet/LoginController?action=login';
+      await page.goto(loginUrl, { 
+        waitUntil: 'domcontentloaded',
+        timeout: 20000 
       });
-      console.log(`✅ INPI crawler initialized with: ${executablePath}`);
-      return;
+      
+      await page.waitForTimeout(2000);
+      
+      const hasLoginForm = await page.evaluate(() => {
+        const loginInput = document.querySelector('input[name="login"]');
+        const senhaInput = document.querySelector('input[name="senha"]');
+        return !!(loginInput && senhaInput);
+      });
+      
+      if (!hasLoginForm) {
+        throw new Error('Login form not found');
+      }
+      
+      await page.type('input[name="login"]', this.credentials.username, { delay: 50 });
+      await page.type('input[name="senha"]', this.credentials.password, { delay: 50 });
+      
+      console.log('🔘 Clicking login button...');
+      
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }),
+        page.click('input[type="submit"]')
+      ]);
+      
+      await page.waitForTimeout(2000);
+      
+      const currentUrl = page.url();
+      console.log('📍 After login URL:', currentUrl);
+      
+      if (currentUrl.includes('login') || currentUrl.includes('Login')) {
+        throw new Error('Login failed - still on login page');
+      }
+      
+      console.log('✅ Login successful');
+      return true;
+      
     } catch (error) {
-      console.log(`Failed with ${executablePath}: ${error.message}`);
-      lastError = error;
+      console.error('❌ Login failed:', error.message);
+      throw error;
     }
   }
-  
-  throw new Error(`Could not find Chrome/Chromium executable. Last error: ${lastError.message}`);
-}
 
   async searchPatents(medicine) {
     console.log('🔍 Starting INPI patent search for:', medicine);
