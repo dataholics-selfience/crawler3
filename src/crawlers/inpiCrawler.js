@@ -4,6 +4,7 @@ class InpiCrawler {
   constructor(credentials = null) {
     this.browser = null;
     this.credentials = credentials;
+    this.cookies = null;
   }
 
   async initialize() {
@@ -28,11 +29,11 @@ class InpiCrawler {
       
       const loginUrl = 'https://busca.inpi.gov.br/pePI/servlet/LoginController?action=login';
       await page.goto(loginUrl, { 
-        waitUntil: 'domcontentloaded',
-        timeout: 20000 
+        waitUntil: 'networkidle0',
+        timeout: 30000 
       });
       
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(3000);
       
       const hasLoginForm = await page.evaluate(() => {
         const loginInput = document.querySelector('input[name="login"]');
@@ -44,26 +45,29 @@ class InpiCrawler {
         throw new Error('Login form not found');
       }
       
-      await page.type('input[name="login"]', this.credentials.username, { delay: 50 });
-      await page.type('input[name="senha"]', this.credentials.password, { delay: 50 });
+      await page.type('input[name="login"]', this.credentials.username, { delay: 100 });
+      await page.type('input[name="senha"]', this.credentials.password, { delay: 100 });
       
       console.log('🔘 Clicking login button...');
       
       await Promise.all([
-        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }),
+        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }),
         page.click('input[type="submit"]')
       ]);
       
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(5000);
       
       const currentUrl = page.url();
       console.log('📍 After login URL:', currentUrl);
       
-      if (currentUrl.includes('login') || currentUrl.includes('Login')) {
-        throw new Error('Login failed - still on login page');
+      const content = await page.content();
+      if (currentUrl.includes('login') || currentUrl.includes('Login') || 
+          content.includes('Login:') || content.includes('Senha:')) {
+        throw new Error('Login failed - credentials may be incorrect');
       }
       
-      console.log('✅ Login successful');
+      this.cookies = await page.cookies();
+      console.log('✅ Login successful, cookies saved');
       return true;
       
     } catch (error) {
@@ -79,7 +83,7 @@ class InpiCrawler {
     const timeout = setTimeout(() => {
       console.log('⏱️ Global timeout - closing page');
       page.close().catch(() => {});
-    }, 60000);
+    }, 90000);
     
     try {
       await page.setRequestInterception(true);
@@ -93,22 +97,35 @@ class InpiCrawler {
       
       if (this.credentials) {
         await this.login(page);
+        
+        if (this.cookies) {
+          await page.setCookie(...this.cookies);
+          console.log('🍪 Cookies restored');
+        }
       }
       
       const searchUrl = 'https://busca.inpi.gov.br/pePI/jsp/patentes/PatenteSearchBasico.jsp';
       console.log('📡 Navigating to search page...');
       
       await page.goto(searchUrl, { 
-        waitUntil: 'domcontentloaded',
-        timeout: 20000 
+        waitUntil: 'networkidle0',
+        timeout: 30000 
       });
       
       console.log('✅ Search page loaded');
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(3000);
       
       const content = await page.content();
       if (content.includes('Login:') && content.includes('Senha:')) {
-        throw new Error('Still requires authentication after login attempt');
+        console.log('⚠️ Session expired, trying to login again...');
+        await this.login(page);
+        await page.goto(searchUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+        await page.waitForTimeout(3000);
+        
+        const recheckContent = await page.content();
+        if (recheckContent.includes('Login:') && recheckContent.includes('Senha:')) {
+          throw new Error('Authentication failed - INPI credentials may be invalid');
+        }
       }
       
       console.log('🔍 Looking for search input...');
@@ -155,11 +172,11 @@ class InpiCrawler {
       
       console.log('⏳ Waiting for results...');
       await page.waitForNavigation({ 
-        waitUntil: 'domcontentloaded',
-        timeout: 20000 
+        waitUntil: 'networkidle0',
+        timeout: 30000 
       }).catch(() => console.log('Navigation timeout - continuing'));
       
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(5000);
       
       console.log('📊 Extracting results...');
       const patents = await page.evaluate(() => {
