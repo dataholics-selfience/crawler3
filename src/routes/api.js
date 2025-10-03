@@ -234,4 +234,29 @@ console.log('🔍 ========================================');
 console.log('✅ All routes registered successfully');
 console.log('🔍 ========================================');
 
+// Test INPI without login
+router.get('/inpi/test', async (req, res) => {
+  const InpiCrawlerSimple = require('../crawlers/inpiCrawlerSimple');
+  const { medicine = 'insulina' } = req.query;
+  
+  const crawler = new InpiCrawlerSimple();
+  
+  try {
+    await crawler.initialize();
+    const result = await crawler.searchPatents(medicine);
+    
+    res.json({
+      success: true,
+      testResult: result
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  } finally {
+    await crawler.close();
+  }
+});
+
 module.exports = router;
