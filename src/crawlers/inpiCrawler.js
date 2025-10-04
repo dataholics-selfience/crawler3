@@ -9,7 +9,7 @@ class InpiCrawler {
   }
 
   async initialize() {
-    console.log('Initializing INPI crawler with AI-powered adaptability');
+    console.log('Initializing INPI crawler');
     this.browser = await puppeteer.launch({
       headless: 'new',
       args: [
@@ -23,12 +23,11 @@ class InpiCrawler {
   }
 
   async detectFieldsIntelligently(page) {
-    console.log('AI: Analyzing page structure...');
+    console.log('Detecting form fields...');
     
     const html = await page.content();
     const groqFields = await this.groqParser.detectFields(html);
     
-    // Validate Groq response
     if (groqFields && 
         groqFields.loginField && 
         groqFields.passwordField && 
@@ -36,17 +35,15 @@ class InpiCrawler {
         groqFields.loginField !== '' &&
         groqFields.passwordField !== '' &&
         groqFields.searchField !== '') {
-      console.log('AI: Groq detected fields successfully');
+      console.log('Groq detected fields:', groqFields);
       return groqFields;
     }
     
-    console.log('AI: Groq failed or returned empty, using fallback');
+    console.log('Groq failed, using fallback detection');
     return await this.fallbackDetection(page);
   }
 
   async fallbackDetection(page) {
-    console.log('Using fallback field detection');
-    
     const detectedFields = await page.evaluate(() => {
       const inputs = Array.from(document.querySelectorAll('input'));
       const fields = {
@@ -78,7 +75,6 @@ class InpiCrawler {
       return fields;
     });
     
-    // Use hardcoded defaults if detection failed
     const fields = {
       loginField: detectedFields.loginField || 'T_Login',
       passwordField: detectedFields.passwordField || 'T_Senha',
@@ -91,7 +87,7 @@ class InpiCrawler {
   }
 
   async performLogin(page, fields) {
-    console.log('AI: Performing login...');
+    console.log('Performing login...');
     
     try {
       const loginSelectors = [
@@ -104,17 +100,14 @@ class InpiCrawler {
       for (const selector of loginSelectors) {
         try {
           loginInput = await page.$(selector);
-          if (loginInput) {
-            console.log(`Login field found: ${selector}`);
-            break;
-          }
+          if (loginInput) break;
         } catch (e) {
           continue;
         }
       }
       
       if (!loginInput) {
-        throw new Error(`Login field not found. Tried: ${fields.loginField}`);
+        throw new Error('Login field not found');
       }
       
       await loginInput.type(this.credentials.username, { delay: 100 });
@@ -129,17 +122,14 @@ class InpiCrawler {
       for (const selector of passwordSelectors) {
         try {
           passwordInput = await page.$(selector);
-          if (passwordInput) {
-            console.log(`Password field found: ${selector}`);
-            break;
-          }
+          if (passwordInput) break;
         } catch (e) {
           continue;
         }
       }
       
       if (!passwordInput) {
-        throw new Error(`Password field not found. Tried: ${fields.passwordField}`);
+        throw new Error('Password field not found');
       }
       
       await passwordInput.type(this.credentials.password, { delay: 100 });
@@ -155,7 +145,7 @@ class InpiCrawler {
       const content = await page.content();
       
       if (currentUrl.includes('login') || content.includes('Login ou Senha incorreta')) {
-        throw new Error('Login failed - check credentials');
+        throw new Error('Login failed');
       }
       
       console.log('Login successful');
@@ -168,7 +158,7 @@ class InpiCrawler {
   }
 
   async performSearch(page, fields, searchTerm) {
-    console.log('AI: Performing search...');
+    console.log('Performing search...');
     
     const searchSelectors = [
       `input[name="${fields.searchField}"]`,
@@ -180,17 +170,14 @@ class InpiCrawler {
     for (const selector of searchSelectors) {
       try {
         searchInput = await page.$(selector);
-        if (searchInput) {
-          console.log(`Search field found: ${selector}`);
-          break;
-        }
+        if (searchInput) break;
       } catch (e) {
         continue;
       }
     }
     
     if (!searchInput) {
-      throw new Error(`Search field not found. Tried: ${fields.searchField}`);
+      throw new Error('Search field not found');
     }
     
     await searchInput.type(searchTerm, { delay: 100 });
@@ -205,35 +192,9 @@ class InpiCrawler {
   }
 
   async extractResults(page) {
-    console.log('Extracting results...');
+    console.log('Extracting results with traditional parsing...');
     
-    const tableHtml = await page.evaluate(() => {
-      const tables = document.querySelectorAll('table');
-      for (const table of tables) {
-        const text = table.innerText || '';
-        if (text.includes('Pedido') || text.includes('Depósito') || text.includes('BR ')) {
-          return table.outerHTML;
-        }
-      }
-      return null;
-    });
-    
-    if (!tableHtml) {
-      console.log('No results table found');
-      return [];
-    }
-    
-    // Try Groq first
-    const groqPatents = await this.groqParser.extractPatents(tableHtml);
-    
-    if (groqPatents && groqPatents.length > 0) {
-      console.log(`AI: Groq extracted ${groqPatents.length} patents`);
-      return groqPatents;
-    }
-    
-    // Fallback
-    console.log('Using traditional extraction');
-    return await page.evaluate(() => {
+    const patents = await page.evaluate(() => {
       const results = [];
       const rows = document.querySelectorAll('table tr');
       
@@ -242,9 +203,10 @@ class InpiCrawler {
         const text = row.innerText || '';
         
         if (cells.length >= 3 && 
-            !text.includes('Login') && 
             !text.startsWith('Pedido\t') &&
-            text.trim()) {
+            !text.includes('Login') && 
+            text.trim() &&
+            cells[0]?.innerText?.trim() !== 'Pedido') {
           results.push({
             processNumber: cells[0]?.innerText?.trim() || '',
             title: cells[1]?.innerText?.trim() || '',
@@ -258,6 +220,9 @@ class InpiCrawler {
       
       return results;
     });
+    
+    console.log(`Extracted ${patents.length} patents`);
+    return patents;
   }
 
   async searchPatents(medicine) {
