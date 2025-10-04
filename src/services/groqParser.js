@@ -27,20 +27,22 @@ class GroqParser {
         });
 
         const response = completion.choices[0]?.message?.content || '';
-        
-        // Clean and validate JSON
         const cleaned = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
         
-        // Test if it's valid JSON
+        // Validate JSON
         JSON.parse(cleaned);
         
         return cleaned;
       } catch (error) {
         console.error(`Groq attempt ${attempt + 1} failed:`, error.message);
-        if (attempt === retries) throw error;
+        if (attempt === retries) {
+          console.error('All Groq attempts failed');
+          return null;
+        }
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
+    return null;
   }
 
   async detectFields(html, pageType = 'unknown') {
@@ -73,7 +75,16 @@ Return ONLY valid JSON, no explanations.`;
 
     try {
       const response = await this.askGroq(prompt);
+      if (!response) return null;
+      
       const fields = JSON.parse(response);
+      
+      // Validate fields are not empty
+      if (!fields.loginField || !fields.passwordField || !fields.searchField) {
+        console.error('Groq returned empty fields');
+        return null;
+      }
+      
       console.log('Groq detected fields:', fields);
       return fields;
     } catch (error) {
@@ -105,13 +116,15 @@ Rules:
 
     try {
       const response = await this.askGroq(prompt);
+      if (!response) return null;
+      
       const patents = JSON.parse(response);
       
       if (!Array.isArray(patents)) {
-        throw new Error('Response is not an array');
+        console.error('Groq response is not an array');
+        return null;
       }
       
-      // Filter out header rows
       const filtered = patents.filter(p => 
         p.processNumber && 
         !p.processNumber.toLowerCase().includes('pedido') &&
