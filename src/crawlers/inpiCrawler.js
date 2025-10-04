@@ -45,75 +45,28 @@ class InpiCrawler {
       if (hasLoginForm && this.credentials) {
         console.log('🔐 Attempting login...');
         
-        // DEBUG: Listar TODOS os inputs
-        const allInputs = await page.evaluate(() => {
-          const inputs = Array.from(document.querySelectorAll('input'));
-          return inputs.map(inp => ({
-            type: inp.type,
-            name: inp.name,
-            id: inp.id,
-            placeholder: inp.placeholder,
-            value: inp.value
-          }));
-        });
-        console.log('All inputs on page:', JSON.stringify(allInputs, null, 2));
+        await page.type('input[name="T_Login"]', this.credentials.username, { delay: 100 });
+        await page.type('input[name="T_Senha"]', this.credentials.password, { delay: 100 });
         
-        // Tentar encontrar campos de forma mais flexível
-        const loginField = await page.evaluate(() => {
-          const inputs = Array.from(document.querySelectorAll('input'));
-          for (const inp of inputs) {
-            const attrs = (inp.name + inp.id + inp.placeholder).toLowerCase();
-            if (attrs.includes('login') || attrs.includes('usuario')) {
-              return { name: inp.name, id: inp.id, type: inp.type };
-            }
-          }
-          return null;
+        console.log('Credentials entered, clicking submit...');
+        
+        await Promise.all([
+          page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
+          page.click('input[type="submit"]')
+        ]);
+        
+        await page.waitForTimeout(3000);
+        console.log('✅ Login completed, current URL:', page.url());
+        
+        // Navegar de volta para a página de busca após login
+        console.log('Navigating back to search page...');
+        await page.goto(searchUrl, { 
+          waitUntil: 'networkidle2',
+          timeout: 30000 
         });
         
-        const passwordField = await page.evaluate(() => {
-          const inputs = Array.from(document.querySelectorAll('input'));
-          for (const inp of inputs) {
-            if (inp.type === 'password') {
-              return { name: inp.name, id: inp.id, type: inp.type };
-            }
-            const attrs = (inp.name + inp.id + inp.placeholder).toLowerCase();
-            if (attrs.includes('senha') || attrs.includes('password')) {
-              return { name: inp.name, id: inp.id, type: inp.type };
-            }
-          }
-          return null;
-        });
-        
-        console.log('Login field found:', loginField);
-        console.log('Password field found:', passwordField);
-        
-        if (loginField && passwordField) {
-          // Usar o ID ou name para preencher
-          if (loginField.id) {
-            await page.type(`#${loginField.id}`, this.credentials.username, { delay: 100 });
-          } else if (loginField.name) {
-            await page.type(`input[name="${loginField.name}"]`, this.credentials.username, { delay: 100 });
-          }
-          
-          if (passwordField.id) {
-            await page.type(`#${passwordField.id}`, this.credentials.password, { delay: 100 });
-          } else if (passwordField.name) {
-            await page.type(`input[name="${passwordField.name}"]`, this.credentials.password, { delay: 100 });
-          }
-          
-          console.log('Credentials entered, submitting...');
-          
-          const submitButton = await page.$('input[type="submit"]') || 
-                              await page.$('button[type="submit"]');
-          
-          if (submitButton) {
-            await submitButton.click();
-            await page.waitForTimeout(5000);
-            console.log('✅ Login submitted');
-          }
-        } else {
-          console.log('⚠️ Login fields not found properly');
-        }
+        await page.waitForTimeout(2000);
+        console.log('Back at search page');
       }
       
       // Procurar campo de busca
@@ -127,9 +80,10 @@ class InpiCrawler {
       for (const selector of selectors) {
         const inputs = await page.$$(selector);
         for (const input of inputs) {
-          const name = await page.evaluate(el => el.name || '', input);
-          if (!name.toLowerCase().includes('login') && !name.toLowerCase().includes('senha')) {
+          const name = await page.evaluate(el => (el.name || '').toLowerCase(), input);
+          if (!name.includes('login') && !name.includes('senha') && !name.includes('t_')) {
             searchInput = input;
+            console.log('Found search input with name:', name);
             break;
           }
         }
@@ -140,14 +94,15 @@ class InpiCrawler {
         throw new Error('Search input not found after login');
       }
       
-      await searchInput.type(medicine);
+      await searchInput.type(medicine, { delay: 100 });
       console.log('Typed search term:', medicine);
       
-      const submitButton = await page.$('input[value="Pesquisar"]') ||
+      const submitButton = await page.$('input[value*="Pesquisar"]') ||
                           await page.$('input[type="submit"]');
       if (submitButton) {
+        console.log('Submitting search...');
         await Promise.all([
-          page.waitForNavigation({ waitUntil: 'networkidle2' }),
+          page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
           submitButton.click()
         ]);
       }
