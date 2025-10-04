@@ -32,10 +32,8 @@ class InpiCrawler {
         timeout: 30000 
       });
       
-      console.log('Page status:', page.url());
       await page.waitForTimeout(2000);
       
-      // Buscar campo de entrada
       const selectors = [
         'input[name="palavra"]',
         'input[name="Palavra"]',
@@ -66,9 +64,32 @@ class InpiCrawler {
         ]);
       }
       
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(3000);
       
-      // Extrair resultados
+      const resultsHtml = await page.content();
+      console.log('Results page HTML length:', resultsHtml.length);
+      console.log('Results page snippet:', resultsHtml.substring(0, 1000));
+      
+      const tableInfo = await page.evaluate(() => {
+        const tables = document.querySelectorAll('table');
+        let info = {
+          tableCount: tables.length,
+          rowCounts: []
+        };
+        
+        tables.forEach((table, i) => {
+          const rows = table.querySelectorAll('tr');
+          info.rowCounts.push({
+            tableIndex: i,
+            rowCount: rows.length,
+            firstRowText: rows[0]?.innerText?.substring(0, 100)
+          });
+        });
+        
+        return info;
+      });
+      console.log('Table info:', JSON.stringify(tableInfo, null, 2));
+      
       const patents = await page.evaluate(() => {
         const results = [];
         const rows = document.querySelectorAll('table tr');
