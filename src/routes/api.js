@@ -5,7 +5,6 @@ console.log('🔍 ========================================');
 console.log('🔍 API Routes - Starting to load...');
 console.log('🔍 ========================================');
 
-// Load crawlers
 let InpiCrawler;
 try {
     InpiCrawler = require('../crawlers/inpiCrawler');
@@ -26,7 +25,7 @@ console.log('🔍 ========================================');
 console.log('🔍 Registering routes...');
 console.log('🔍 ========================================');
 
-// INPI Route - Simple version without authentication
+// INPI Route with authentication
 router.get('/inpi/patents', async (req, res) => {
     console.log('📍 INPI route called');
     console.log('📍 Query params:', req.query);
@@ -40,7 +39,20 @@ router.get('/inpi/patents', async (req, res) => {
         });
     }
     
-    const crawler = new InpiCrawler();
+    const credentials = {
+        username: process.env.INPI_USERNAME,
+        password: process.env.INPI_PASSWORD
+    };
+    
+    if (!credentials.username || !credentials.password) {
+        return res.status(401).json({
+            success: false,
+            error: 'INPI credentials not configured',
+            message: 'Set INPI_USERNAME and INPI_PASSWORD environment variables'
+        });
+    }
+    
+    const crawler = new InpiCrawler(credentials);
     
     try {
         console.log('Initializing INPI crawler for:', medicine);
@@ -133,7 +145,12 @@ router.get('/compare/patents', async (req, res) => {
         });
     }
     
-    const inpiCrawler = new InpiCrawler();
+    const credentials = {
+        username: process.env.INPI_USERNAME,
+        password: process.env.INPI_PASSWORD
+    };
+    
+    const inpiCrawler = new InpiCrawler(credentials);
     const patentscopeCrawler = new PatentScopeCrawler();
     
     try {
