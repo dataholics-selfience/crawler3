@@ -58,7 +58,6 @@ class InpiCrawler {
         await page.waitForTimeout(3000);
         console.log('✅ Login completed, current URL:', page.url());
         
-        // Navegar de volta para a página de busca após login
         console.log('Navigating back to search page...');
         await page.goto(searchUrl, { 
           waitUntil: 'networkidle2',
@@ -69,10 +68,24 @@ class InpiCrawler {
         console.log('Back at search page');
       }
       
-      // Procurar campo de busca
+      console.log('🔍 Looking for search field...');
+      
+      const allSearchInputs = await page.evaluate(() => {
+        const inputs = Array.from(document.querySelectorAll('input'));
+        return inputs.map(inp => ({
+          type: inp.type,
+          name: inp.name,
+          id: inp.id,
+          placeholder: inp.placeholder
+        }));
+      });
+      console.log('Available inputs after login:', JSON.stringify(allSearchInputs, null, 2));
+      
       const selectors = [
         'input[name="palavra"]',
         'input[name="Palavra"]',
+        'input[name*="resumo"]',
+        'input[name*="titulo"]',
         'input[type="text"]'
       ];
       
@@ -81,7 +94,8 @@ class InpiCrawler {
         const inputs = await page.$$(selector);
         for (const input of inputs) {
           const name = await page.evaluate(el => (el.name || '').toLowerCase(), input);
-          if (!name.includes('login') && !name.includes('senha') && !name.includes('t_')) {
+          if (!name.includes('login') && !name.includes('senha') && 
+              !name.includes('t_') && !name.includes('numpedido')) {
             searchInput = input;
             console.log('Found search input with name:', name);
             break;
