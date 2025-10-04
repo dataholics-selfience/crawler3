@@ -1,8 +1,9 @@
 const puppeteer = require('puppeteer');
 
 class InpiCrawler {
-  constructor() {
+  constructor(credentials = null) {
     this.browser = null;
+    this.credentials = credentials;
   }
 
   async initialize() {
@@ -32,8 +33,47 @@ class InpiCrawler {
         timeout: 30000 
       });
       
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(3000);
       
+      // Verificar se tem formulário de login na página
+      const hasLoginForm = await page.evaluate(() => {
+        return document.body.innerText.includes('Login') || 
+               document.body.innerText.includes('Senha');
+      });
+      
+      console.log('Has login form:', hasLoginForm);
+      
+      if (hasLoginForm && this.credentials) {
+        console.log('🔐 Attempting login...');
+        
+        // Procurar campos de login
+        const loginInput = await page.$('input[name="login"]') || 
+                          await page.$('input[id*="login"]') ||
+                          await page.$('input[placeholder*="Login"]');
+                          
+        const passwordInput = await page.$('input[name="senha"]') || 
+                             await page.$('input[type="password"]');
+        
+        if (loginInput && passwordInput) {
+          await loginInput.type(this.credentials.username, { delay: 100 });
+          await passwordInput.type(this.credentials.password, { delay: 100 });
+          
+          console.log('Credentials entered, submitting...');
+          
+          const submitButton = await page.$('input[type="submit"]') || 
+                              await page.$('button[type="submit"]');
+          
+          if (submitButton) {
+            await submitButton.click();
+            await page.waitForTimeout(5000);
+            console.log('✅ Login submitted');
+          }
+        } else {
+          console.log('⚠️ Login fields not found');
+        }
+      }
+      
+      // Agora procurar o campo de busca
       const selectors = [
         'input[name="palavra"]',
         'input[name="Palavra"]',
@@ -42,21 +82,26 @@ class InpiCrawler {
       
       let searchInput = null;
       for (const selector of selectors) {
-        searchInput = await page.$(selector);
-        if (searchInput) {
-          console.log('Found search input with selector:', selector);
-          break;
+        const inputs = await page.$$(selector);
+        for (const input of inputs) {
+          const name = await page.evaluate(el => el.name || '', input);
+          if (!name.toLowerCase().includes('login') && !name.toLowerCase().includes('senha')) {
+            searchInput = input;
+            break;
+          }
         }
+        if (searchInput) break;
       }
       
       if (!searchInput) {
-        throw new Error('Search input not found');
+        throw new Error('Search input not found after login');
       }
       
       await searchInput.type(medicine);
       console.log('Typed search term:', medicine);
       
-      const submitButton = await page.$('input[type="submit"]');
+      const submitButton = await page.$('input[value="Pesquisar"]') ||
+                          await page.$('input[type="submit"]');
       if (submitButton) {
         await Promise.all([
           page.waitForNavigation({ waitUntil: 'networkidle2' }),
@@ -66,42 +111,23 @@ class InpiCrawler {
       
       await page.waitForTimeout(3000);
       
-      const resultsHtml = await page.content();
-      console.log('Results page HTML length:', resultsHtml.length);
-      console.log('Results page snippet:', resultsHtml.substring(0, 1000));
-      
-      const tableInfo = await page.evaluate(() => {
-        const tables = document.querySelectorAll('table');
-        let info = {
-          tableCount: tables.length,
-          rowCounts: []
-        };
-        
-        tables.forEach((table, i) => {
-          const rows = table.querySelectorAll('tr');
-          info.rowCounts.push({
-            tableIndex: i,
-            rowCount: rows.length,
-            firstRowText: rows[0]?.innerText?.substring(0, 100)
-          });
-        });
-        
-        return info;
-      });
-      console.log('Table info:', JSON.stringify(tableInfo, null, 2));
-      
+      // Extrair resultados
       const patents = await page.evaluate(() => {
         const results = [];
         const rows = document.querySelectorAll('table tr');
         
         rows.forEach(row => {
           const cells = row.querySelectorAll('td');
-          if (cells.length >= 3) {
+          const text = row.innerText || '';
+          
+          if (cells.length >= 3 && 
+              !text.includes('Login') && 
+              !text.includes('Senha')) {
             results.push({
               processNumber: cells[0]?.innerText?.trim() || '',
               title: cells[1]?.innerText?.trim() || '',
               depositDate: cells[2]?.innerText?.trim() || '',
-              fullText: row.innerText.trim(),
+              fullText: text.trim(),
               source: 'INPI'
             });
           }
