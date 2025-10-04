@@ -6,7 +6,6 @@ class InpiCrawler {
     this.browser = null;
     this.credentials = credentials;
     this.groqParser = new GroqParser();
-    this.detectedFields = null; // Cache para campos detectados
   }
 
   async initialize() {
@@ -17,34 +16,38 @@ class InpiCrawler {
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-software-rasterizer',
-        '--disable-dev-shm-usage'
+        '--disable-gpu'
       ]
     });
     console.log('INPI crawler initialized');
   }
 
-  async detectFieldsIntelligently(page, pageType) {
-    console.log(`AI: Analyzing ${pageType} page structure...`);
+  async detectFieldsIntelligently(page) {
+    console.log('AI: Analyzing page structure...');
     
     const html = await page.content();
-    const fields = await this.groqParser.detectFields(html, pageType);
+    const groqFields = await this.groqParser.detectFields(html);
     
-    if (fields) {
-      console.log(`AI: Successfully detected ${pageType} fields`);
-      return fields;
+    // Validate Groq response
+    if (groqFields && 
+        groqFields.loginField && 
+        groqFields.passwordField && 
+        groqFields.searchField &&
+        groqFields.loginField !== '' &&
+        groqFields.passwordField !== '' &&
+        groqFields.searchField !== '') {
+      console.log('AI: Groq detected fields successfully');
+      return groqFields;
     }
     
-    // Fallback: manual detection
-    console.log(`AI: Failed, using fallback detection for ${pageType}`);
+    console.log('AI: Groq failed or returned empty, using fallback');
     return await this.fallbackDetection(page);
   }
 
   async fallbackDetection(page) {
     console.log('Using fallback field detection');
     
-    return await page.evaluate(() => {
+    const detectedFields = await page.evaluate(() => {
       const inputs = Array.from(document.querySelectorAll('input'));
       const fields = {
         loginField: null,
@@ -58,59 +61,67 @@ class InpiCrawler {
         const id = (input.id || '').toLowerCase();
         const attrs = name + id;
         
-        if (!fields.loginField && (attrs.includes('login') || attrs.includes('usuario'))) {
+        if (!fields.loginField && (attrs.includes('login') || attrs.includes('usuario') || name === 't_login')) {
           fields.loginField = input.name || input.id;
         }
         
-        if (!fields.passwordField && (input.type === 'password' || attrs.includes('senha'))) {
+        if (!fields.passwordField && (input.type === 'password' || attrs.includes('senha') || name === 't_senha')) {
           fields.passwordField = input.name || input.id;
         }
         
         if (!fields.searchField && 
-            !attrs.includes('login') && 
-            !attrs.includes('senha') &&
-            !attrs.includes('pedido') &&
-            input.type === 'text') {
+            (attrs.includes('expressao') || attrs.includes('palavra') || name === 'expressaopesquisa')) {
           fields.searchField = input.name || input.id;
         }
       }
       
       return fields;
     });
+    
+    // Use hardcoded defaults if detection failed
+    const fields = {
+      loginField: detectedFields.loginField || 'T_Login',
+      passwordField: detectedFields.passwordField || 'T_Senha',
+      searchField: detectedFields.searchField || 'ExpressaoPesquisa',
+      submitSelector: 'input[type="submit"]'
+    };
+    
+    console.log('Fallback fields:', fields);
+    return fields;
   }
 
   async performLogin(page, fields) {
-    console.log('AI: Performing intelligent login...');
+    console.log('AI: Performing login...');
     
     try {
-      // Try different selector strategies
-      const selectors = [
+      const loginSelectors = [
         `input[name="${fields.loginField}"]`,
-        `input[id="${fields.loginField}"]`,
-        `#${fields.loginField}`
+        `#${fields.loginField}`,
+        `input[id="${fields.loginField}"]`
       ];
       
       let loginInput = null;
-      for (const selector of selectors) {
+      for (const selector of loginSelectors) {
         try {
           loginInput = await page.$(selector);
-          if (loginInput) break;
+          if (loginInput) {
+            console.log(`Login field found: ${selector}`);
+            break;
+          }
         } catch (e) {
           continue;
         }
       }
       
       if (!loginInput) {
-        throw new Error('Login field not found');
+        throw new Error(`Login field not found. Tried: ${fields.loginField}`);
       }
       
       await loginInput.type(this.credentials.username, { delay: 100 });
-      console.log('Username entered');
       
-      // Same for password
       const passwordSelectors = [
         `input[name="${fields.passwordField}"]`,
-        `input[id="${fields.passwordField}"]`,
+        `#${fields.passwordField}`,
         `input[type="password"]`
       ];
       
@@ -118,20 +129,21 @@ class InpiCrawler {
       for (const selector of passwordSelectors) {
         try {
           passwordInput = await page.$(selector);
-          if (passwordInput) break;
+          if (passwordInput) {
+            console.log(`Password field found: ${selector}`);
+            break;
+          }
         } catch (e) {
           continue;
         }
       }
       
       if (!passwordInput) {
-        throw new Error('Password field not found');
+        throw new Error(`Password field not found. Tried: ${fields.passwordField}`);
       }
       
       await passwordInput.type(this.credentials.password, { delay: 100 });
-      console.log('Password entered');
       
-      // Submit
       await Promise.all([
         page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
         page.click(fields.submitSelector)
@@ -139,7 +151,6 @@ class InpiCrawler {
       
       await page.waitForTimeout(3000);
       
-      // Verify login success
       const currentUrl = page.url();
       const content = await page.content();
       
@@ -157,12 +168,12 @@ class InpiCrawler {
   }
 
   async performSearch(page, fields, searchTerm) {
-    console.log('AI: Performing intelligent search...');
+    console.log('AI: Performing search...');
     
     const searchSelectors = [
       `input[name="${fields.searchField}"]`,
-      `input[id="${fields.searchField}"]`,
-      `#${fields.searchField}`
+      `#${fields.searchField}`,
+      `input[id="${fields.searchField}"]`
     ];
     
     let searchInput = null;
@@ -170,7 +181,7 @@ class InpiCrawler {
       try {
         searchInput = await page.$(selector);
         if (searchInput) {
-          console.log(`Found search field with: ${selector}`);
+          console.log(`Search field found: ${selector}`);
           break;
         }
       } catch (e) {
@@ -179,11 +190,10 @@ class InpiCrawler {
     }
     
     if (!searchInput) {
-      throw new Error('Search field not found');
+      throw new Error(`Search field not found. Tried: ${fields.searchField}`);
     }
     
     await searchInput.type(searchTerm, { delay: 100 });
-    console.log(`Typed: ${searchTerm}`);
     
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
@@ -195,9 +205,8 @@ class InpiCrawler {
   }
 
   async extractResults(page) {
-    console.log('AI: Extracting results intelligently...');
+    console.log('Extracting results...');
     
-    // Get only the results table
     const tableHtml = await page.evaluate(() => {
       const tables = document.querySelectorAll('table');
       for (const table of tables) {
@@ -218,12 +227,12 @@ class InpiCrawler {
     const groqPatents = await this.groqParser.extractPatents(tableHtml);
     
     if (groqPatents && groqPatents.length > 0) {
-      console.log(`AI: Extracted ${groqPatents.length} patents`);
+      console.log(`AI: Groq extracted ${groqPatents.length} patents`);
       return groqPatents;
     }
     
-    // Fallback to traditional
-    console.log('AI: Using traditional extraction fallback');
+    // Fallback
+    console.log('Using traditional extraction');
     return await page.evaluate(() => {
       const results = [];
       const rows = document.querySelectorAll('table tr');
@@ -234,7 +243,7 @@ class InpiCrawler {
         
         if (cells.length >= 3 && 
             !text.includes('Login') && 
-            !text.includes('Pedido\t') &&
+            !text.startsWith('Pedido\t') &&
             text.trim()) {
           results.push({
             processNumber: cells[0]?.innerText?.trim() || '',
@@ -252,7 +261,7 @@ class InpiCrawler {
   }
 
   async searchPatents(medicine) {
-    console.log(`=== Starting AI-powered INPI search for: ${medicine} ===`);
+    console.log(`Starting INPI search for: ${medicine}`);
     const page = await this.browser.newPage();
     
     try {
@@ -264,22 +273,17 @@ class InpiCrawler {
       });
       await page.waitForTimeout(3000);
       
-      // Check if login needed
       const needsLogin = await page.evaluate(() => {
         return document.body.innerText.includes('Login') || 
                document.body.innerText.includes('Senha');
       });
       
       if (needsLogin && this.credentials) {
-        console.log('Login required - using AI detection');
+        console.log('Login required');
         
-        // Detect login fields
-        const loginFields = await this.detectFieldsIntelligently(page, 'login');
-        
-        // Perform login
+        const loginFields = await this.detectFieldsIntelligently(page);
         await this.performLogin(page, loginFields);
         
-        // Return to search page
         await page.goto(searchUrl, { 
           waitUntil: 'networkidle2',
           timeout: 30000 
@@ -287,16 +291,12 @@ class InpiCrawler {
         await page.waitForTimeout(2000);
       }
       
-      // Detect search fields
-      const searchFields = await this.detectFieldsIntelligently(page, 'search');
-      
-      // Perform search
+      const searchFields = await this.detectFieldsIntelligently(page);
       await this.performSearch(page, searchFields, medicine);
       
-      // Extract results
       const patents = await this.extractResults(page);
       
-      console.log(`=== INPI search completed: ${patents.length} patents found ===`);
+      console.log(`INPI search completed: ${patents.length} patents found`);
       return patents;
       
     } catch (error) {
