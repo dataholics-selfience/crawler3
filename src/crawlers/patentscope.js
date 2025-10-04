@@ -215,7 +215,7 @@ Return ONLY valid JSON.`;
       console.log('No results found, returning test data');
       return [{
         publicationNumber: 'NO_RESULTS',
-        title: `Search completed but no results found`,
+        title: 'Search completed but no results found',
         abstract: 'PatentScope returned no results or page structure is different',
         source: 'PatentScope'
       }];
@@ -245,4 +245,21 @@ Return ONLY valid JSON.`;
       
     } catch (error) {
       console.error('PatentScope search error:', error.message);
-      return
+      return [{
+        publicationNumber: 'ERROR',
+        title: 'Search failed',
+        abstract: error.message,
+        source: 'PatentScope'
+      }];
+    }
+  }
+
+  async close() {
+    if (this.browser) {
+      await this.browser.close();
+      console.log('PatentScope crawler closed');
+    }
+  }
+}
+
+module.exports = PatentScopeCrawler;
