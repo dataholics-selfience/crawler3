@@ -35,7 +35,6 @@ class InpiCrawler {
       
       await page.waitForTimeout(3000);
       
-      // Verificar se tem formulário de login na página
       const hasLoginForm = await page.evaluate(() => {
         return document.body.innerText.includes('Login') || 
                document.body.innerText.includes('Senha');
@@ -46,17 +45,61 @@ class InpiCrawler {
       if (hasLoginForm && this.credentials) {
         console.log('🔐 Attempting login...');
         
-        // Procurar campos de login
-        const loginInput = await page.$('input[name="login"]') || 
-                          await page.$('input[id*="login"]') ||
-                          await page.$('input[placeholder*="Login"]');
-                          
-        const passwordInput = await page.$('input[name="senha"]') || 
-                             await page.$('input[type="password"]');
+        // DEBUG: Listar TODOS os inputs
+        const allInputs = await page.evaluate(() => {
+          const inputs = Array.from(document.querySelectorAll('input'));
+          return inputs.map(inp => ({
+            type: inp.type,
+            name: inp.name,
+            id: inp.id,
+            placeholder: inp.placeholder,
+            value: inp.value
+          }));
+        });
+        console.log('All inputs on page:', JSON.stringify(allInputs, null, 2));
         
-        if (loginInput && passwordInput) {
-          await loginInput.type(this.credentials.username, { delay: 100 });
-          await passwordInput.type(this.credentials.password, { delay: 100 });
+        // Tentar encontrar campos de forma mais flexível
+        const loginField = await page.evaluate(() => {
+          const inputs = Array.from(document.querySelectorAll('input'));
+          for (const inp of inputs) {
+            const attrs = (inp.name + inp.id + inp.placeholder).toLowerCase();
+            if (attrs.includes('login') || attrs.includes('usuario')) {
+              return { name: inp.name, id: inp.id, type: inp.type };
+            }
+          }
+          return null;
+        });
+        
+        const passwordField = await page.evaluate(() => {
+          const inputs = Array.from(document.querySelectorAll('input'));
+          for (const inp of inputs) {
+            if (inp.type === 'password') {
+              return { name: inp.name, id: inp.id, type: inp.type };
+            }
+            const attrs = (inp.name + inp.id + inp.placeholder).toLowerCase();
+            if (attrs.includes('senha') || attrs.includes('password')) {
+              return { name: inp.name, id: inp.id, type: inp.type };
+            }
+          }
+          return null;
+        });
+        
+        console.log('Login field found:', loginField);
+        console.log('Password field found:', passwordField);
+        
+        if (loginField && passwordField) {
+          // Usar o ID ou name para preencher
+          if (loginField.id) {
+            await page.type(`#${loginField.id}`, this.credentials.username, { delay: 100 });
+          } else if (loginField.name) {
+            await page.type(`input[name="${loginField.name}"]`, this.credentials.username, { delay: 100 });
+          }
+          
+          if (passwordField.id) {
+            await page.type(`#${passwordField.id}`, this.credentials.password, { delay: 100 });
+          } else if (passwordField.name) {
+            await page.type(`input[name="${passwordField.name}"]`, this.credentials.password, { delay: 100 });
+          }
           
           console.log('Credentials entered, submitting...');
           
@@ -69,11 +112,11 @@ class InpiCrawler {
             console.log('✅ Login submitted');
           }
         } else {
-          console.log('⚠️ Login fields not found');
+          console.log('⚠️ Login fields not found properly');
         }
       }
       
-      // Agora procurar o campo de busca
+      // Procurar campo de busca
       const selectors = [
         'input[name="palavra"]',
         'input[name="Palavra"]',
@@ -111,7 +154,6 @@ class InpiCrawler {
       
       await page.waitForTimeout(3000);
       
-      // Extrair resultados
       const patents = await page.evaluate(() => {
         const results = [];
         const rows = document.querySelectorAll('table tr');
