@@ -1,57 +1,85 @@
-const puppeteer = require("puppeteer");
-const logger = require("../utils/logger");
+// src/crawlers/patentscope.js
+const puppeteer = require('puppeteer');
+const logger = require('../utils/logger');
 
-async function fetchPatentScopePatents(query) {
-  logger.info(`Initializing PatentScope browser...`);
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
+class PatentScopeCrawler {
+  constructor() {
+    this.browser = null;
+    this.page = null;
+  }
 
-  const page = await browser.newPage();
-  logger.info("PatentScope browser initialized");
+  async initialize() {
+    try {
+      logger.info('Initializing PatentScope browser...');
+      this.browser = await puppeteer.launch({
+        headless: 'new',
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+      });
+      this.page = await this.browser.newPage();
+      await this.page.setUserAgent(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      );
+      await this.page.setViewport({ width: 1366, height: 768 });
+      logger.info('PatentScope browser initialized');
+    } catch (error) {
+      logger.error('Failed to initialize PatentScope browser', error);
+      throw error;
+    }
+  }
 
-  try {
-    logger.info(`Searching PatentScope patents for query: ${query}`);
-    const searchUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(query)})`;
-    logger.info(`Navigating to: ${searchUrl}`);
+  async close() {
+    try {
+      if (this.page) await this.page.close();
+      if (this.browser) await this.browser.close();
+      logger.info('PatentScope browser closed');
+    } catch (error) {
+      logger.warn('Error closing PatentScope browser', error);
+    }
+  }
 
-    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+  /**
+   * Captura a primeira página de resultados e garante pelo menos 15 patentes
+   */
+  async searchFirstPage(medicine) {
+    if (!this.page) throw new Error('Browser not initialized');
 
-    // Aguarda o corpo da página carregar
-    await page.waitForSelector("body", { timeout: 15000 });
+    try {
+      const searchUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(medicine)})`;
+      logger.info(`Navigating to: ${searchUrl}`);
 
-    // Captura o HTML bruto
-    const htmlContent = await page.content();
+      await this.page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-    logger.info("PatentScope HTML captured successfully");
+      // Espera a lista de resultados carregar, até 60s
+      await this.page.waitForSelector('.result-list', { timeout: 60000 });
 
-    // Retorna o HTML dentro de um formato padrão para tratamento posterior (ex: Groq ou n8n)
-    return {
-      success: true,
-      query,
-      source: "PatentScope (WIPO)",
-      totalResults: 1,
-      timestamp: new Date().toISOString(),
-      patents: [
-        {
-          publicationNumber: "HTML_DUMP",
-          title: "Raw HTML snapshot (to be parsed by AI)",
-          abstract: htmlContent.slice(0, 5000) + "...", // reduz pra não enviar payload gigante
-          source: "PatentScope",
-        },
-      ],
-    };
-  } catch (error) {
-    logger.error("PatentScope crawler error:", error.message);
-    return {
-      success: false,
-      error: error.message,
-    };
-  } finally {
-    await browser.close();
-    logger.info("PatentScope browser closed");
+      // Aguarda mais um pouco para garantir carregamento completo
+      await this.page.waitForTimeout(3000);
+
+      // Extrai o HTML da lista de patentes
+      const html = await this.page.evaluate(() => {
+        const container = document.querySelector('.result-list');
+        return container ? container.innerHTML : '';
+      });
+
+      // Contagem mínima de 15 patentes (aproximação pelo número de itens na lista)
+      const numPatents = await this.page.evaluate(() => {
+        const items = document.querySelectorAll('.result-list > .result-item');
+        return items.length;
+      });
+
+      logger.info(`Found ${numPatents} patents on first page`);
+
+      if (numPatents < 15) {
+        logger.warn('Less than 15 patents found on first page, returning what is available');
+      }
+
+      return html || '<div>No patents found</div>';
+
+    } catch (error) {
+      logger.error('PatentScope search failed', error);
+      throw error;
+    }
   }
 }
 
-module.exports = { fetchPatentScopePatents };
+module.exports = PatentScopeCrawler;
