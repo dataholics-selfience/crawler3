@@ -25,25 +25,18 @@ console.log('🔍 ========================================');
 console.log('🔍 Registering routes...');
 console.log('🔍 ========================================');
 
-// INPI Route with authentication
+// INPI Route
 router.get('/inpi/patents', async (req, res) => {
     console.log('📍 INPI route called');
     console.log('📍 Query params:', req.query);
-    
+
     const { medicine } = req.query;
-    
-    if (!medicine) {
-        return res.status(400).json({
-            success: false,
-            error: 'Medicine parameter is required'
-        });
-    }
-    
+    if (!medicine) return res.status(400).json({ success: false, error: 'Medicine parameter is required' });
+
     const credentials = {
         username: process.env.INPI_USERNAME,
         password: process.env.INPI_PASSWORD
     };
-    
     if (!credentials.username || !credentials.password) {
         return res.status(401).json({
             success: false,
@@ -51,17 +44,14 @@ router.get('/inpi/patents', async (req, res) => {
             message: 'Set INPI_USERNAME and INPI_PASSWORD environment variables'
         });
     }
-    
+
     const crawler = new InpiCrawler(credentials);
-    
     try {
         console.log('Initializing INPI crawler for:', medicine);
         await crawler.initialize();
-        
         console.log('Searching INPI patents...');
         const patents = await crawler.searchPatents(medicine);
         console.log('Found', patents.length, 'INPI patents');
-        
         res.json({
             success: true,
             query: medicine,
@@ -86,32 +76,22 @@ router.get('/inpi/patents', async (req, res) => {
 router.get('/patentscope/patents', async (req, res) => {
     console.log('📍 PatentScope route called');
     console.log('📍 Query params:', req.query);
-    
+
     const { medicine } = req.query;
-    
-    if (!medicine) {
-        return res.status(400).json({
-            error: 'Medicine parameter is required'
-        });
-    }
-    
-    if (!PatentScopeCrawler) {
-        return res.status(500).json({
-            success: false,
-            error: 'PatentScope crawler not available'
-        });
-    }
-    
+    if (!medicine) return res.status(400).json({ error: 'Medicine parameter is required' });
+
+    if (!PatentScopeCrawler) return res.status(500).json({ success: false, error: 'PatentScope crawler not available' });
+
     const crawler = new PatentScopeCrawler();
-    
     try {
-        console.log('Starting PatentScope search for:', medicine);
+        console.log('Initializing PatentScope crawler for:', medicine);
         await crawler.initialize();
-        
+
         console.log('Searching PatentScope patents...');
-        const patents = await crawler.searchPatents(medicine);
+        // Chamada corrigida: método correto é search()
+        const patents = await crawler.search(medicine, { limit: 5 });
         console.log('Found', patents.length, 'PatentScope patents');
-        
+
         res.json({
             success: true,
             query: medicine,
@@ -136,23 +116,18 @@ router.get('/patentscope/patents', async (req, res) => {
 router.get('/compare/patents', async (req, res) => {
     console.log('📍 Compare route called');
     console.log('📍 Query params:', req.query);
-    
+
     const { medicine } = req.query;
-    
-    if (!medicine) {
-        return res.status(400).json({
-            error: 'Medicine parameter is required'
-        });
-    }
-    
+    if (!medicine) return res.status(400).json({ error: 'Medicine parameter is required' });
+
     const credentials = {
         username: process.env.INPI_USERNAME,
         password: process.env.INPI_PASSWORD
     };
-    
+
     const inpiCrawler = new InpiCrawler(credentials);
     const patentscopeCrawler = new PatentScopeCrawler();
-    
+
     try {
         console.log('Starting comparison search...');
         const [inpiResults, patentscopeResults] = await Promise.all([
@@ -170,7 +145,7 @@ router.get('/compare/patents', async (req, res) => {
             (async () => {
                 try {
                     await patentscopeCrawler.initialize();
-                    const results = await patentscopeCrawler.searchPatents(medicine);
+                    const results = await patentscopeCrawler.search(medicine, { limit: 5 });
                     await patentscopeCrawler.close();
                     return results;
                 } catch (err) {
@@ -179,7 +154,7 @@ router.get('/compare/patents', async (req, res) => {
                 }
             })()
         ]);
-        
+
         res.json({
             success: true,
             query: medicine,
