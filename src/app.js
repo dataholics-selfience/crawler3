@@ -23,6 +23,8 @@ const apiRoutes = require('./routes/api');
 console.log('✅ API routes loaded');
 console.log('   API routes type:', typeof apiRoutes);
 
+const PatentScopeCrawler = require('./crawlers/patentscope'); // novo crawler
+
 const app = express();
 
 // Trust proxy for Railway deployment
@@ -75,9 +77,34 @@ console.log('✅ Registered: /');
 app.use('/api/data', apiRoutes);
 console.log('✅ Registered: /api/data');
 
-console.log('🚀 ========================================');
-console.log('🚀 All routes registered successfully');
-console.log('🚀 ========================================');
+// ---------- PatentScope route (novo) ----------
+app.get('/api/data/patentscope/patents', async (req, res) => {
+    const { medicine } = req.query;
+    const crawler = new PatentScopeCrawler();
+
+    try {
+        await crawler.initialize();
+        const patents = await crawler.search(medicine); // <- chama search()
+        await crawler.close();
+
+        res.json({
+            success: true,
+            query: medicine,
+            source: 'PatentScope (WIPO)',
+            totalResults: patents.length,
+            timestamp: new Date().toISOString(),
+            patents,
+        });
+    } catch (error) {
+        await crawler.close();
+        logger.error('PatentScope crawler error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch PatentScope patents',
+            message: error.message,
+        });
+    }
+});
 
 // Global error handler
 app.use(errorHandler);
@@ -92,5 +119,9 @@ app.use('*', (req, res) => {
         timestamp: new Date().toISOString()
     });
 });
+
+console.log('🚀 ========================================');
+console.log('🚀 All routes registered successfully');
+console.log('🚀 ========================================');
 
 module.exports = app;
