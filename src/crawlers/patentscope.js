@@ -1,4 +1,3 @@
-// src/crawlers/patentscope.js
 const puppeteer = require('puppeteer');
 const logger = require('../utils/logger');
 
@@ -8,17 +7,21 @@ class PatentScopeCrawler {
     this.page = null;
   }
 
-  // Inicializa o browser
   async initialize() {
     try {
       logger.info('Initializing PatentScope browser...');
       this.browser = await puppeteer.launch({
         headless: 'new',
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu'
+        ],
       });
       this.page = await this.browser.newPage();
       await this.page.setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       );
       await this.page.setViewport({ width: 1366, height: 768 });
       logger.info('PatentScope browser initialized');
@@ -28,7 +31,6 @@ class PatentScopeCrawler {
     }
   }
 
-  // Fecha o browser
   async close() {
     try {
       if (this.page) await this.page.close();
@@ -39,87 +41,133 @@ class PatentScopeCrawler {
     }
   }
 
-  // Busca patentes por termo
-  async search(medicine, maxResults = 10) {
+  async search(medicine, maxPages = 3) {
     if (!this.page) throw new Error('Browser not initialized');
 
-    const url = `https://patentscope.wipo.int/search/en/search.jsf`;
-    let attempts = 0;
-    const patents = [];
+    try {
+      // Busca direta via URL com Full Text (mais confiável)
+      const searchUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(medicine)})`;
+      logger.info(`Navigating to: ${searchUrl}`);
 
-    while (attempts < 3 && patents.length === 0) {
-      attempts++;
-      try {
-        logger.info(`Searching PatentScope patents (attempt ${attempts})...`);
+      await this.page.goto(searchUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000
+      });
 
-        await this.page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+      await this.page.waitForTimeout(5000);
 
-        // Digita o termo na barra de busca
-        await this.page.waitForSelector('#query', { timeout: 20000 });
-        await this.page.type('#query', medicine, { delay: 100 });
-        await Promise.all([
-          this.page.click('#searchForm\\:searchBtn'),
-          this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }),
-        ]);
+      const allPatents = [];
+      let currentPage = 1;
 
-        // Espera pelo carregamento da lista de resultados ou timeout longo
-        await this.page.waitForFunction(
-          () =>
-            document.querySelectorAll('.result-list .result-item').length > 0,
-          { timeout: 60000 }
-        );
+      while (currentPage <= maxPages) {
+        logger.info(`Extracting page ${currentPage}...`);
 
-        // Scroll dinâmico para carregar resultados lazy-loaded
-        await this.autoScroll();
+        const pagePatents = await this.page.evaluate(() => {
+          const cleanText = (text) => {
+            return text
+              .replace(/\t+/g, ' ')
+              .replace(/\n+/g, ' ')
+              .replace(/\s{2,}/g, ' ')
+              .trim();
+          };
 
-        // Extrai os resultados da primeira página
-        const results = await this.page.evaluate((max) => {
-          const items = Array.from(document.querySelectorAll('.result-list .result-item'));
-          return items.slice(0, max).map((item) => {
-            const titleEl = item.querySelector('.title');
-            const linkEl = item.querySelector('.title a');
-            const appNumEl = item.querySelector('.appNumber');
-            const pubNumEl = item.querySelector('.pubNumber');
-            const dateEl = item.querySelector('.pubDate');
+          const results = [];
+          const seenNumbers = new Set();
+          const allElements = document.querySelectorAll('div, span, td');
 
-            return {
-              title: titleEl?.innerText.trim() || '',
-              link: linkEl?.href || '',
-              applicationNumber: appNumEl?.innerText.trim() || '',
-              publicationNumber: pubNumEl?.innerText.trim() || '',
-              publicationDate: dateEl?.innerText.trim() || '',
-            };
-          });
-        }, maxResults);
+          for (const element of allElements) {
+            const text = element.textContent || '';
+            const patentMatch = text.match(/\b(WO|US|EP|CN|JP|KR|BR)\s*\d{4}[\/\s]\d+/i);
 
-        patents.push(...results);
+            if (patentMatch && text.length > 50 && text.length < 2000) {
+              const number = cleanText(patentMatch[0]);
 
-      } catch (error) {
-        logger.warn(`Attempt ${attempts} failed for PatentScope: ${error.message}`);
-        if (attempts === 3) {
-          throw new Error(error.message);
+              if (!seenNumbers.has(number)) {
+                seenNumbers.add(number);
+                
+                const lines = text.split('\n').filter(line => line.trim().length > 10);
+
+                if (lines.length > 0 && 
+                    !text.includes('Download') && 
+                    !text.includes('Authority File')) {
+                  
+                  const applicantMatch = text.match(/Applicant[:\s]+([^\n]+)/i);
+                  const inventorMatch = text.match(/Inventor[:\s]+([^\n]+)/i);
+
+                  results.push({
+                    publicationNumber: number,
+                    title: cleanText(lines[0].substring(0, 200)),
+                    abstract: cleanText(text.substring(0, 500)),
+                    applicant: applicantMatch ? cleanText(applicantMatch[1].substring(0, 100)) : '',
+                    inventor: inventorMatch ? cleanText(inventorMatch[1].substring(0, 100)) : '',
+                    source: 'PatentScope'
+                  });
+                }
+              }
+            }
+          }
+
+          return results;
+        });
+
+        logger.info(`Found ${pagePatents.length} patents on page ${currentPage}`);
+        allPatents.push(...pagePatents);
+
+        // Tentar ir para próxima página
+        if (currentPage < maxPages) {
+          try {
+            const nextButton = await this.page.$('a[title*="Next"]');
+            
+            if (!nextButton) {
+              logger.info('No next button found');
+              break;
+            }
+
+            await Promise.all([
+              this.page.waitForNavigation({
+                waitUntil: 'domcontentloaded',
+                timeout: 15000
+              }),
+              nextButton.click()
+            ]);
+
+            await this.page.waitForTimeout(3000);
+          } catch (e) {
+            logger.warn(`Failed to navigate to next page: ${e.message}`);
+            break;
+          }
         }
-        // espera 3 segundos antes da próxima tentativa
-        await new Promise((r) => setTimeout(r, 3000));
-      }
-    }
 
-    return patents;
+        currentPage++;
+      }
+
+      // Deduplicação final
+      const uniquePatents = Array.from(
+        new Map(allPatents.map(p => [p.publicationNumber, p])).values()
+      );
+
+      logger.info(`Total unique patents: ${uniquePatents.length}`);
+
+      return uniquePatents.length > 0 ? uniquePatents : [{
+        publicationNumber: 'NO_RESULTS',
+        title: 'No patents found',
+        abstract: 'PatentScope returned no results',
+        source: 'PatentScope'
+      }];
+
+    } catch (error) {
+      logger.error('PatentScope search failed', error);
+      return [{
+        publicationNumber: 'ERROR',
+        title: 'Search failed',
+        abstract: error.message,
+        source: 'PatentScope'
+      }];
+    }
   }
 
-  // Scroll gradual para carregar resultados dinâmicos
-  async autoScroll() {
-    await this.page.evaluate(async () => {
-      const distance = 200;
-      const delay = 100;
-      const list = document.querySelector('.result-list');
-      if (!list) return;
-
-      while (list.scrollHeight > list.clientHeight && list.scrollTop + list.clientHeight < list.scrollHeight) {
-        list.scrollBy(0, distance);
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    });
+  async searchPatents(medicine) {
+    return await this.search(medicine, 3);
   }
 }
 
