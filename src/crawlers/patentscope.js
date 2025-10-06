@@ -132,4 +132,21 @@ class PatentScopeCrawler {
         ];
       }
 
-      logger.info(`Found ${
+      logger.info(`Found ${patents.length} patents`);
+      return patents;
+
+    } catch (error) {
+      logger.error('PatentScope search failed', error);
+      return [
+        {
+          publicationNumber: 'ERROR',
+          title: 'Search failed',
+          abstract: error.message,
+          source: 'PatentScope'
+        }
+      ];
+    }
+  }
+}
+
+module.exports = PatentScopeCrawler;
