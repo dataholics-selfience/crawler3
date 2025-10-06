@@ -259,4 +259,11 @@ class PatentScopeCrawler {
   }
 }
 
+async search(medicine) {
+    return await this.searchPatents(medicine);
+  }
+}
+
+module.exports = PatentScopeCrawler;
+
 module.exports = PatentScopeCrawler;
