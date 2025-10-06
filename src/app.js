@@ -9,28 +9,17 @@ const logger = require('./utils/logger');
 const errorHandler = require('./middleware/errorHandler');
 const rateLimiter = require('./middleware/rateLimiter');
 
-console.log('🚀 ========================================');
-console.log('🚀 Starting application...');
-console.log('🚀 ========================================');
-
-// Import routes
-console.log('📦 Loading routes...');
+// Rotas
 const healthRoutes = require('./routes/health');
-console.log('✅ Health routes loaded');
 const indexRoutes = require('./routes/index');
-console.log('✅ Index routes loaded');
 const apiRoutes = require('./routes/api');
-console.log('✅ API routes loaded');
-console.log('   API routes type:', typeof apiRoutes);
 
-const PatentScopeCrawler = require('./crawlers/patentscope'); // novo crawler
+const PatentScopeCrawler = require('./crawlers/patentscope');
 
 const app = express();
-
-// Trust proxy for Railway deployment
 app.set('trust proxy', 1);
 
-// Security middleware
+// Segurança
 app.use(helmet({
     crossOriginEmbedderPolicy: false,
     contentSecurityPolicy: {
@@ -43,24 +32,16 @@ app.use(helmet({
     }
 }));
 
-// CORS configuration
-app.use(cors({
-    origin: true,
-    credentials: true,
-    optionsSuccessStatus: 200
-}));
+// CORS
+app.use(cors({ origin: true, credentials: true, optionsSuccessStatus: 200 }));
 
-// Performance middleware
+// Performance
 app.use(compression());
 
-// Logging middleware
-app.use(morgan('combined', {
-    stream: {
-        write: (message) => logger.info(message.trim(), { type: 'http' })
-    }
-}));
+// Logging HTTP
+app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim(), { type: 'http' }) } }));
 
-// Body parsing middleware
+// Body parser
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -68,23 +49,19 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/api/', rateLimiter.apiLimiter);
 app.use('/api/data/', rateLimiter.crawlerLimiter);
 
-// Routes
-console.log('🔗 Registering routes...');
+// Rotas principais
 app.use('/health', healthRoutes);
-console.log('✅ Registered: /health');
 app.use('/', indexRoutes);
-console.log('✅ Registered: /');
 app.use('/api/data', apiRoutes);
-console.log('✅ Registered: /api/data');
 
-// ---------- PatentScope route (novo) ----------
+// Rota temporária para PatentScope (novo crawler)
 app.get('/api/data/patentscope/patents', async (req, res) => {
     const { medicine } = req.query;
     const crawler = new PatentScopeCrawler();
 
     try {
         await crawler.initialize();
-        const patents = await crawler.search(medicine); // <- chama search()
+        const patents = await crawler.search(medicine, 5); // até 5 páginas
         await crawler.close();
 
         res.json({
@@ -109,9 +86,9 @@ app.get('/api/data/patentscope/patents', async (req, res) => {
 // Global error handler
 app.use(errorHandler);
 
-// 404 handler
+// 404
 app.use('*', (req, res) => {
-    console.log('❌ 404 - Route not found:', req.method, req.originalUrl);
+    logger.warn(`404 - Route not found: ${req.method} ${req.originalUrl}`);
     res.status(404).json({
         success: false,
         error: 'Route not found',
@@ -119,9 +96,5 @@ app.use('*', (req, res) => {
         timestamp: new Date().toISOString()
     });
 });
-
-console.log('🚀 ========================================');
-console.log('🚀 All routes registered successfully');
-console.log('🚀 ========================================');
 
 module.exports = app;
