@@ -1,77 +1,77 @@
-const puppeteer = require('puppeteer');
+import express from 'express';
+import puppeteer from 'puppeteer';
+import Groq from 'groq-js';
 
-class PatentScopeCrawler {
-    constructor(options = {}) {
-        this.browser = null;
-        this.page = null;
-        this.options = options;
-        this.maxPages = options.maxPages || 5; // Máximo de páginas a navegar
-    }
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-    async initialize() {
-        this.browser = await puppeteer.launch({
-            headless: 'new', // evita aviso de depreciação
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
-        });
-        this.page = await this.browser.newPage();
-        console.log('PatentScope crawler initialized');
-    }
+// Configuração de retries e delays
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 1000;
 
-    async search(medicine) {
-        if (!this.page) throw new Error('Crawler not initialized');
-
-        const results = [];
-        const baseUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(medicine)})`;
-
-        await this.page.goto(baseUrl, { waitUntil: 'networkidle2' });
-
-        let currentPage = 1;
-
-        while (currentPage <= this.maxPages) {
-            console.log(`Processing page ${currentPage}...`);
-
-            // Aguarda os resultados da página carregarem
-            await this.page.waitForSelector('.resultRow', { timeout: 5000 }).catch(() => {});
-
-            const patentsOnPage = await this.page.evaluate(() => {
-                const rows = Array.from(document.querySelectorAll('.resultRow'));
-                return rows.map(row => {
-                    const titleEl = row.querySelector('.title');
-                    const linkEl = row.querySelector('a');
-                    const assigneeEl = row.querySelector('.assignee');
-                    const inventorEl = row.querySelector('.inventor');
-                    return {
-                        title: titleEl ? titleEl.textContent.trim() : null,
-                        link: linkEl ? linkEl.href : null,
-                        assignee: assigneeEl ? assigneeEl.textContent.trim() : null,
-                        inventor: inventorEl ? inventorEl.textContent.trim() : null
-                    };
-                });
-            });
-
-            results.push(...patentsOnPage);
-
-            // Verifica se existe botão "Next" e se ainda não chegou no limite de páginas
-            const nextButton = await this.page.$('a[title="Next"]');
-            if (!nextButton) break;
-
-            await Promise.all([
-                this.page.waitForNavigation({ waitUntil: 'networkidle2' }),
-                nextButton.click()
-            ]);
-
-            currentPage++;
-        }
-
-        return results;
-    }
-
-    async close() {
-        if (this.browser) {
-            await this.browser.close();
-            console.log('PatentScope crawler closed');
-        }
-    }
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-module.exports = PatentScopeCrawler;
+// Função principal de extração
+async function fetchPatentscope(query = '') {
+  let attempt = 0;
+
+  while (attempt < MAX_RETRIES) {
+    let browser;
+    try {
+      browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+      const page = await browser.newPage();
+      page.setDefaultNavigationTimeout(60000);
+
+      const searchUrl = `https://patentscope.wipo.int/search/en/search.jsf?query=${encodeURIComponent(query)}`;
+      console.log(`Tentando acessar: ${searchUrl} (tentativa ${attempt + 1})`);
+
+      await page.goto(searchUrl, { waitUntil: 'networkidle2' });
+
+      // Espera pelos resultados
+      await page.waitForSelector('.result-item', { timeout: 15000 });
+
+      // Extrai os dados usando Groq
+      const rawResults = await page.evaluate(() => {
+        return Array.from(document.querySelectorAll('.result-item')).map(item => ({
+          title: item.querySelector('.title')?.innerText || null,
+          link: item.querySelector('.title a')?.href || null,
+          applicants: item.querySelector('.applicants')?.innerText || null,
+          inventors: item.querySelector('.inventors')?.innerText || null,
+        }));
+      });
+
+      // Processamento Groq (exemplo: só patentes com título)
+      const results = Groq.query('*[title != null]', { data: rawResults });
+
+      return results;
+
+    } catch (err) {
+      console.error(`Erro na tentativa ${attempt + 1}:`, err.message);
+      attempt++;
+      const delay = BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 500;
+      console.log(`Aguardando ${Math.round(delay)}ms antes da próxima tentativa...`);
+      await sleep(delay);
+    } finally {
+      if (browser) await browser.close();
+    }
+  }
+
+  console.warn('Falha ao extrair dados do Patentscope após várias tentativas.');
+  return [];
+}
+
+app.get('/patentscope', async (req, res) => {
+  const { query } = req.query;
+
+  try {
+    const data = await fetchPatentscope(query || '');
+    res.json(data);
+  } catch (err) {
+    console.error('Erro ao processar crawler:', err.message);
+    res.status(500).json({ error: 'Falha ao processar crawler Patentscope' });
+  }
+});
+
+app.listen(PORT, () => console.log(`Crawler Patentscope rodando em ${PORT}`));
