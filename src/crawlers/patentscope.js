@@ -5,10 +5,11 @@ const logger = require('../utils/logger');
 class PatentScopeCrawler {
   constructor() {
     this.browser = null;
+    this.page = null;
   }
 
   async initialize() {
-    if (!this.browser) {
+    try {
       logger.info('Initializing PatentScope browser');
       this.browser = await puppeteer.launch({
         headless: 'new',
@@ -19,31 +20,10 @@ class PatentScopeCrawler {
           '--disable-gpu'
         ]
       });
-      logger.info('PatentScope browser initialized');
-    }
-  }
+      this.page = await this.browser.newPage();
 
-  async close() {
-    try {
-      if (this.browser) {
-        await this.browser.close();
-        logger.info('PatentScope browser closed');
-        this.browser = null;
-      }
-    } catch (error) {
-      logger.warn('Error closing PatentScope browser', error);
-    }
-  }
-
-  async searchPatents(medicine) {
-    await this.initialize();
-
-    let page;
-    try {
-      page = await this.browser.newPage();
-      await page.setRequestInterception(true);
-
-      page.on('request', (req) => {
+      await this.page.setRequestInterception(true);
+      this.page.on('request', (req) => {
         if (['image', 'stylesheet', 'font'].includes(req.resourceType())) {
           req.abort();
         } else {
@@ -51,49 +31,105 @@ class PatentScopeCrawler {
         }
       });
 
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-      await page.setViewport({ width: 1920, height: 1080 });
+      await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+      await this.page.setViewport({ width: 1920, height: 1080 });
+      logger.info('PatentScope browser initialized');
+    } catch (error) {
+      logger.error('Failed to initialize PatentScope', error);
+      throw error;
+    }
+  }
 
+  async close() {
+    try {
+      if (this.page) await this.page.close();
+      if (this.browser) await this.browser.close();
+      logger.info('PatentScope browser closed');
+    } catch (error) {
+      logger.warn('Error closing PatentScope', error);
+    }
+  }
+
+  async searchPatents(medicine) {
+    if (!this.page) throw new Error('Browser not initialized');
+
+    try {
       const searchUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(medicine)})`;
-      logger.info(`Navigating to: ${searchUrl}`);
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      logger.info(`Searching: ${searchUrl}`);
+      await this.page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-      // Espera a página carregar
-      await page.waitForTimeout(5000);
+      await this.page.waitForTimeout(5000); // espera o conteúdo carregar
 
-      // Captura print da página para OCR
-      const screenshotBuffer = await page.screenshot({ fullPage: true });
+      // tenta extrair texto diretamente
+      let patents = await this.page.evaluate(() => {
+        const cleanText = (text) => text?.replace(/\t+/g, ' ').replace(/\n+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+        const results = [];
+        const seen = new Set();
 
-      const ocrResult = await Tesseract.recognize(screenshotBuffer, 'eng', {
-        logger: (m) => logger.debug(`Tesseract: ${m.status} ${m.progress}`)
+        const allText = document.body.innerText;
+        const patentMatches = allText.match(/\b(WO|US|EP|CN|JP)\s*\/?\s*\d{4}\s*\/?\s*\d{5,}/gi);
+
+        if (!patentMatches) return [];
+
+        for (const match of patentMatches) {
+          const number = cleanText(match);
+          if (seen.has(number)) continue;
+          seen.add(number);
+
+          results.push({
+            publicationNumber: number,
+            title: number, // título inicial
+            abstract: '',
+            applicant: '',
+            inventor: '',
+            source: 'PatentScope'
+          });
+        }
+
+        return results;
       });
 
-      const text = ocrResult.data.text;
+      // se não encontrou nada, usa OCR do screenshot
+      if (!patents || patents.length === 0) {
+        logger.info('No text detected, using OCR');
+        const screenshotBuffer = await this.page.screenshot();
+        const { data: { text } } = await Tesseract.recognize(screenshotBuffer, 'eng');
+        
+        const cleanText = (t) => t.replace(/\t+/g, ' ').replace(/\n+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+        const ocrMatches = text.match(/\b(WO|US|EP|CN|JP)\s*\/?\s*\d{4}\s*\/?\s*\d{5,}/gi);
+        patents = [];
 
-      // Extrai patentes pelo padrão conhecido
-      const patentMatches = text.match(/\b(WO|US|EP|CN|JP)\s*\/?\s*\d{4}\s*\/?\s*\d{5,}/gi) || [];
-      const uniquePatents = Array.from(new Set(patentMatches)).slice(0, 15); // no mínimo 15
+        if (ocrMatches) {
+          const seen = new Set();
+          for (const match of ocrMatches) {
+            const number = cleanText(match);
+            if (seen.has(number)) continue;
+            seen.add(number);
 
-      const results = uniquePatents.map((number, idx) => ({
-        publicationNumber: number,
-        title: `Patent ${idx + 1} - ${number}`,
-        abstract: text.substring(0, 300),
-        applicant: '',
-        inventor: '',
-        source: 'PatentScope'
-      }));
+            patents.push({
+              publicationNumber: number,
+              title: number,
+              abstract: cleanText(text).substring(0, 500),
+              applicant: '',
+              inventor: '',
+              source: 'PatentScope'
+            });
+          }
+        }
+      }
 
-      logger.info(`Found ${results.length} patents via OCR`);
+      if (patents.length === 0) {
+        return [{
+          publicationNumber: 'NO_RESULTS',
+          title: 'No patents found',
+          abstract: `Search for "${medicine}" returned no results`,
+          applicant: '',
+          inventor: '',
+          source: 'PatentScope'
+        }];
+      }
 
-      return results.length > 0 ? results : [{
-        publicationNumber: 'NO_RESULTS',
-        title: 'No patents found',
-        abstract: `Search for "${medicine}" returned no results`,
-        applicant: '',
-        inventor: '',
-        source: 'PatentScope'
-      }];
-
+      return patents;
     } catch (error) {
       logger.error('PatentScope search failed', error);
       return [{
@@ -104,8 +140,6 @@ class PatentScopeCrawler {
         inventor: '',
         source: 'PatentScope'
       }];
-    } finally {
-      if (page) await page.close();
     }
   }
 }
