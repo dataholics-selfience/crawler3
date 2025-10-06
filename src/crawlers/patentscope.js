@@ -99,13 +99,14 @@ Return ONLY valid JSON.`;
   }
 
   async performSearch(searchTerm) {
-    console.log('Performing PatentScope search...');
+    console.log('Performing PatentScope full-text search...');
     
-    const directUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=${encodeURIComponent(searchTerm)}`;
-    console.log(`Using direct URL: ${directUrl}`);
+    // Busca full-text via URL (mais confiável e completa)
+    const fullTextUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(searchTerm)})`;
+    console.log(`Using full-text URL: ${fullTextUrl}`);
     
     try {
-      await this.page.goto(directUrl, { 
+      await this.page.goto(fullTextUrl, { 
         waitUntil: 'domcontentloaded',
         timeout: 30000 
       });
@@ -118,84 +119,46 @@ Return ONLY valid JSON.`;
       });
       
       if (hasResults) {
-        console.log('Direct URL search successful');
+        console.log('Full-text search successful');
         return;
       }
     } catch (e) {
-      console.log('Direct URL failed, trying form search');
+      console.log('Full-text URL failed:', e.message);
     }
     
-    await this.page.goto(this.baseUrl, { 
-      waitUntil: 'domcontentloaded',
-      timeout: 30000 
-    });
-    
-    await this.page.waitForTimeout(3000);
-    
-    const fields = await this.detectSearchFieldsIntelligently();
-    
-    const searchSelectors = [
-      `input[name="${fields.searchField}"]`,
-      `#${fields.searchField}`,
-      'input[type="text"]'
-    ];
-    
-    let searchInput = null;
-    for (const selector of searchSelectors) {
-      try {
-        searchInput = await this.page.$(selector);
-        if (searchInput) {
-          console.log(`Search field found: ${selector}`);
-          break;
-        }
-      } catch (e) {
-        continue;
-      }
-    }
-    
-    if (!searchInput) {
-      throw new Error('Search field not found');
-    }
-    
-    await searchInput.click({ clickCount: 3 });
-    await searchInput.type(searchTerm);
-    console.log(`Typed: ${searchTerm}`);
-    
-    try {
-      await Promise.all([
-        this.page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
-        this.page.click(fields.submitSelector)
-      ]);
-    } catch (e) {
-      console.log('Navigation timeout, continuing...');
-    }
-    
-    await this.page.waitForTimeout(5000);
+    throw new Error('PatentScope search failed');
   }
 
-  async extractResults() {
-    console.log('Extracting PatentScope results...');
-    
+  async extractResultsFromCurrentPage() {
     const patents = await this.page.evaluate(() => {
+      const cleanText = (text) => {
+        return text
+          .replace(/\t+/g, ' ')
+          .replace(/\n+/g, ' ')
+          .replace(/\s{2,}/g, ' ')
+          .trim();
+      };
+      
       const results = [];
-      const allElements = document.querySelectorAll('div, span, td');
-      const seenNumbers = new Map();
+      const allElements = document.querySelectorAll('div, span, td, a');
+      const seenNumbers = new Set();
       
       for (const element of allElements) {
         const text = element.textContent || '';
         const patentMatch = text.match(/\b(WO|US|EP|CN|JP|KR|BR)\s*\d{4}[\/\s]\d+/i);
         
         if (patentMatch && text.length > 50 && text.length < 2000) {
-          const number = patentMatch[0].trim();
+          const number = cleanText(patentMatch[0]);
           
-          if (!seenNumbers.has(number) || text.length > seenNumbers.get(number).abstract.length) {
+          if (!seenNumbers.has(number)) {
             const lines = text.split('\n').filter(line => line.trim().length > 10);
             
             if (lines.length > 0 && !text.includes('Download') && !text.includes('Authority File')) {
-              seenNumbers.set(number, {
+              seenNumbers.add(number);
+              results.push({
                 publicationNumber: number,
-                title: lines[0].substring(0, 200).trim(),
-                abstract: text.substring(0, 500).trim(),
+                title: cleanText(lines[0].substring(0, 200)),
+                abstract: cleanText(text.substring(0, 500)),
                 source: 'PatentScope'
               });
             }
@@ -203,10 +166,70 @@ Return ONLY valid JSON.`;
         }
       }
       
-      return Array.from(seenNumbers.values());
+      return results;
     });
     
-    if (patents.length === 0) {
+    return patents;
+  }
+
+  async goToNextPage() {
+    try {
+      // Procurar botão "Next" ou similar
+      const nextButton = await this.page.$('a[title*="Next"]') || 
+                        await this.page.$('a:contains("Next")') ||
+                        await this.page.$('.paginationNext') ||
+                        await this.page.$('input[value*="Next"]');
+      
+      if (!nextButton) {
+        console.log('No next button found');
+        return false;
+      }
+      
+      await Promise.all([
+        this.page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }),
+        nextButton.click()
+      ]);
+      
+      await this.page.waitForTimeout(3000);
+      console.log('Navigated to next page');
+      return true;
+    } catch (e) {
+      console.log('Failed to go to next page:', e.message);
+      return false;
+    }
+  }
+
+  async extractResults(maxPages = 5) {
+    console.log(`Extracting results from up to ${maxPages} pages...`);
+    
+    let allPatents = [];
+    let currentPage = 1;
+    
+    while (currentPage <= maxPages) {
+      console.log(`Extracting page ${currentPage}...`);
+      
+      const pagePatents = await this.extractResultsFromCurrentPage();
+      allPatents = allPatents.concat(pagePatents);
+      
+      console.log(`Found ${pagePatents.length} patents on page ${currentPage}`);
+      
+      if (currentPage < maxPages) {
+        const hasNext = await this.goToNextPage();
+        if (!hasNext) {
+          console.log('No more pages available');
+          break;
+        }
+      }
+      
+      currentPage++;
+    }
+    
+    // Deduplica final
+    const uniquePatents = Array.from(
+      new Map(allPatents.map(p => [p.publicationNumber, p])).values()
+    );
+    
+    if (uniquePatents.length === 0) {
       return [{
         publicationNumber: 'NO_RESULTS',
         title: 'No patents found',
@@ -215,16 +238,16 @@ Return ONLY valid JSON.`;
       }];
     }
     
-    console.log(`Extracted ${patents.length} unique patents`);
-    return patents;
+    console.log(`Total unique patents extracted: ${uniquePatents.length}`);
+    return uniquePatents;
   }
 
   async searchPatents(medicine) {
-    console.log(`Starting PatentScope search for: ${medicine}`);
+    console.log(`Starting PatentScope full-text search for: ${medicine}`);
     
     try {
       await this.performSearch(medicine);
-      const patents = await this.extractResults();
+      const patents = await this.extractResults(5); // 5 páginas
       
       console.log(`PatentScope search completed: ${patents.length} patents found`);
       return patents;
@@ -240,12 +263,4 @@ Return ONLY valid JSON.`;
     }
   }
 
-  async close() {
-    if (this.browser) {
-      await this.browser.close();
-      console.log('PatentScope crawler closed');
-    }
-  }
-}
-
-module.exports = PatentScopeCrawler;
+  async
