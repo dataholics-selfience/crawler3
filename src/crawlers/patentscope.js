@@ -1,87 +1,57 @@
-import puppeteer from "puppeteer";
-import winston from "winston";
+const puppeteer = require("puppeteer");
+const logger = require("../utils/logger");
 
-const logger = winston.createLogger({
-  level: "info",
-  transports: [new winston.transports.Console()],
-});
+async function fetchPatentScopePatents(query) {
+  logger.info(`Initializing PatentScope browser...`);
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
 
-export async function fetchPatentScopePatents(medicine) {
-  logger.info(`Initializing PatentScope crawler for: ${medicine}`);
+  const page = await browser.newPage();
+  logger.info("PatentScope browser initialized");
 
-  const url = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${medicine})`;
-
-  let browser;
   try {
-    logger.info("Initializing PatentScope browser...");
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-      ],
-    });
+    logger.info(`Searching PatentScope patents for query: ${query}`);
+    const searchUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(query)})`;
+    logger.info(`Navigating to: ${searchUrl}`);
 
-    const page = await browser.newPage();
+    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
 
-    // Define um user-agent realista para evitar bloqueio
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
-    );
+    // Aguarda o corpo da página carregar
+    await page.waitForSelector("body", { timeout: 15000 });
 
-    await page.goto(url, {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
-    });
+    // Captura o HTML bruto
+    const htmlContent = await page.content();
 
-    logger.info("Waiting for search results to load...");
+    logger.info("PatentScope HTML captured successfully");
 
-    // Espera até que os resultados da lista apareçam
-    // Pode ser 'div.result' ou 'table.resultTable' dependendo da estrutura
-    try {
-      await page.waitForSelector(".result, .result-item, table.resultTable", {
-        timeout: 20000,
-      });
-    } catch (err) {
-      logger.warn("⚠️ Results not fully rendered, returning fallback HTML...");
-    }
-
-    // Aguarda um pequeno delay extra para o JS do WIPO terminar
-    await page.waitForTimeout(2000);
-
-    const html = await page.content();
-
-    logger.info("PatentScope HTML captured successfully.");
-
+    // Retorna o HTML dentro de um formato padrão para tratamento posterior (ex: Groq ou n8n)
     return {
       success: true,
-      query: medicine,
+      query,
       source: "PatentScope (WIPO)",
-      totalResults: "unknown",
+      totalResults: 1,
       timestamp: new Date().toISOString(),
       patents: [
         {
           publicationNumber: "HTML_DUMP",
-          title: "Raw HTML snapshot (ready for Groq parse)",
-          abstract: html,
+          title: "Raw HTML snapshot (to be parsed by AI)",
+          abstract: htmlContent.slice(0, 5000) + "...", // reduz pra não enviar payload gigante
           source: "PatentScope",
         },
       ],
     };
   } catch (error) {
-    logger.error("Error in PatentScope crawler:", error);
+    logger.error("PatentScope crawler error:", error.message);
     return {
       success: false,
-      query: medicine,
-      source: "PatentScope (WIPO)",
       error: error.message,
     };
   } finally {
-    if (browser) {
-      await browser.close();
-      logger.info("PatentScope browser closed");
-    }
+    await browser.close();
+    logger.info("PatentScope browser closed");
   }
 }
+
+module.exports = { fetchPatentScopePatents };
