@@ -9,17 +9,11 @@ class PatentScopeCrawler {
     this.groqParser = new GroqParser();
   }
 
-  // Inicializa Puppeteer
   async initialize() {
     console.log('Initializing PatentScope crawler...');
     this.browser = await puppeteer.launch({
       headless: 'new',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu'
-      ]
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
     this.page = await this.browser.newPage();
     await this.page.setUserAgent(
@@ -30,175 +24,60 @@ class PatentScopeCrawler {
     console.log('PatentScope crawler initialized');
   }
 
-  // Fallback inteligente para detectar campos de busca
-  async detectSearchFieldsIntelligently() {
-    console.log('Detecting PatentScope search fields...');
-    const html = await this.page.content();
+  async performSearch(searchTerm) {
+    const fullTextUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(searchTerm)})`;
+    console.log(`Navigating to full-text URL: ${fullTextUrl}`);
+    await this.page.goto(fullTextUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    // Espera o bloco de resultados aparecer
+    await this.page.waitForSelector('div#resultDiv', { timeout: 60000 });
+    console.log('Full-text search page loaded');
+  }
 
-    const prompt = `Analyze this PatentScope WIPO search page HTML and identify search fields.
+  async extractResultsFromPage() {
+    const html = await this.page.evaluate(() => {
+      const container = document.querySelector('div#resultDiv');
+      return container ? container.innerHTML : '';
+    });
 
+    if (!html) return [];
+
+    // Usa GroqParser para extrair JSON estruturado
+    const prompt = `Extract patent information from the following HTML of a PatentScope results page.
+Return a JSON array where each item has:
+- publicationNumber
+- title
+- abstract
+- inventor
+- applicant
+- source ("PatentScope")
 HTML:
-${html.substring(0, 3000)}
-
-Return ONLY this JSON:
-{
-  "searchField": "exact name or id attribute of search input",
-  "submitSelector": "CSS selector for search button"
-}
-
-Common patterns:
-- Search: fpSearch, simpleSearch, query
-- Submit: commandSimpleFPSearch, input[type="submit"]
-
-Return ONLY valid JSON.`;
+${html.substring(0, 30000)}
+Return ONLY valid JSON array.`;
 
     try {
       const response = await this.groqParser.askGroq(prompt);
       if (!response) throw new Error('Groq returned null');
-      const fields = JSON.parse(response);
 
-      if (fields.searchField && fields.submitSelector) {
-        console.log('Groq detected PatentScope fields:', fields);
-        return fields;
-      }
-
-      throw new Error('Incomplete fields');
-    } catch (error) {
-      console.log('Groq failed, using fallback');
-      return await this.fallbackDetection();
-    }
-  }
-
-  async fallbackDetection() {
-    const detectedFields = await this.page.evaluate(() => {
-      const inputs = Array.from(document.querySelectorAll('input[type="text"]'));
-      let searchField = null;
-
-      for (const input of inputs) {
-        const name = (input.name || '').toLowerCase();
-        const id = (input.id || '').toLowerCase();
-
-        if (name.includes('search') || id.includes('search') || name.includes('query') || name.includes('fpsearch')) {
-          searchField = input.name || input.id;
-          break;
-        }
-      }
-
-      return {
-        searchField: searchField,
-        submitSelector: 'input[type="submit"]'
-      };
-    });
-
-    const fields = {
-      searchField: detectedFields.searchField || 'simpleSearchSearchForm:fpSearch',
-      submitSelector: 'input[type="submit"]'
-    };
-
-    console.log('Fallback fields:', fields);
-    return fields;
-  }
-
-  // Executa a busca full-text
-  async performSearch(searchTerm) {
-    console.log('Performing PatentScope full-text search...');
-    const fullTextUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(searchTerm)})`;
-    console.log(`Using full-text URL: ${fullTextUrl}`);
-
-    try {
-      await this.page.goto(fullTextUrl, { waitUntil: 'networkidle0', timeout: 60000 });
-      await this.page.waitForTimeout(5000);
-      console.log('Full-text search page loaded');
+      const results = JSON.parse(response);
+      return results.map(p => ({ ...p, source: 'PatentScope' }));
     } catch (e) {
-      throw new Error('PatentScope search failed: ' + e.message);
+      console.error('Groq parsing failed:', e.message);
+      return [];
     }
   }
 
-  // Extrai resultados de uma página
-  async extractResultsFromCurrentPage() {
-    console.log('Extracting results from current page...');
-    const patents = await this.page.evaluate(() => {
-      const clean = (txt) => txt.replace(/\s+/g, ' ').trim();
-      const rows = Array.from(document.querySelectorAll('table.resultTable tr')).filter(tr =>
-        tr.innerText.match(/(WO|US|EP|CN|JP|KR|BR|CA|AU|IN)\s*\d{4,}/i)
-      );
-
-      const results = [];
-      const seen = new Set();
-
-      for (const tr of rows) {
-        const text = clean(tr.innerText);
-        const match = text.match(/(WO|US|EP|CN|JP|KR|BR|CA|AU|IN)\s*[\d/]+/i);
-        if (!match) continue;
-
-        const publicationNumber = match[0].replace(/\s+/g, '');
-        if (seen.has(publicationNumber)) continue;
-        seen.add(publicationNumber);
-
-        const title = clean(text.split(/\n| {2,}/)[0] || '');
-        const abstract = clean(text.substring(0, 600));
-
-        results.push({
-          publicationNumber,
-          title: title || 'Untitled patent',
-          abstract,
-          source: 'PatentScope'
-        });
-      }
-
-      // fallback se a tabela não existir
-      if (results.length === 0) {
-        const blocks = Array.from(document.querySelectorAll('div, td')).map(el => el.innerText);
-        for (const block of blocks) {
-          const match = block.match(/\b(WO|US|EP|CN|JP|KR|BR|CA|AU|IN)\s*\d{4,}[\/\s]?\d*/i);
-          if (!match) continue;
-          const number = match[0].replace(/\s+/g, '');
-          if (seen.has(number)) continue;
-          seen.add(number);
-          results.push({
-            publicationNumber: number,
-            title: clean(block.split('\n')[0] || ''),
-            abstract: clean(block.substring(0, 600)),
-            source: 'PatentScope'
-          });
-        }
-      }
-
-      return results;
-    });
-
-    console.log(`Extracted ${patents.length} patents from current page`);
-    return patents;
-  }
-
-  // Navega para a próxima página
   async goToNextPage() {
-    console.log('Trying to go to next page...');
     try {
-      const nextButtonSelectors = [
-        'a[id*="nextPageLink"]',
-        'a[title*="Next"]',
-        '.ui-paginator-next',
-        'input[value*="Next"]'
-      ];
-
-      let nextButton = null;
-      for (const sel of nextButtonSelectors) {
-        nextButton = await this.page.$(sel);
-        if (nextButton) break;
-      }
-
-      if (!nextButton) {
-        console.log('No next button found — probably last page.');
-        return false;
-      }
+      // PatentScope usa AJAX; próximo botão
+      const nextButton = await this.page.$('a[title*="Next"], a.paginationNext');
+      if (!nextButton) return false;
 
       await Promise.all([
-        this.page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 60000 }),
+        this.page.waitForSelector('div#resultDiv', { timeout: 30000 }),
         nextButton.click()
       ]);
 
-      await this.page.waitForTimeout(4000);
+      await this.page.waitForTimeout(2000);
       console.log('Moved to next page');
       return true;
     } catch (e) {
@@ -207,61 +86,58 @@ Return ONLY valid JSON.`;
     }
   }
 
-  // Extrai resultados de várias páginas
   async extractResults(maxPages = 5) {
-    console.log(`Extracting results from up to ${maxPages} pages...`);
     let allPatents = [];
-    let currentPage = 1;
-
-    while (currentPage <= maxPages) {
-      console.log(`Processing page ${currentPage}...`);
-      const pagePatents = await this.extractResultsFromCurrentPage();
-      allPatents = allPatents.concat(pagePatents);
-
-      console.log(`Found ${pagePatents.length} patents on page ${currentPage}`);
+    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+      console.log(`Processing page ${pageNum}...`);
+      const pageResults = await this.extractResultsFromPage();
+      console.log(`Extracted ${pageResults.length} patents from current page`);
+      allPatents = allPatents.concat(pageResults);
 
       const hasNext = await this.goToNextPage();
       if (!hasNext) break;
-
-      currentPage++;
-      await this.page.waitForTimeout(3000);
     }
 
-    const uniquePatents = Array.from(new Map(allPatents.map(p => [p.publicationNumber, p])).values());
+    // Deduplica por publicationNumber
+    const uniquePatents = Array.from(
+      new Map(allPatents.map(p => [p.publicationNumber, p])).values()
+    );
 
-    if (uniquePatents.length === 0) {
-      return [{
-        publicationNumber: 'NO_RESULTS',
-        title: 'No patents found',
-        abstract: 'PatentScope returned no results',
-        source: 'PatentScope'
-      }];
+    if (!uniquePatents.length) {
+      return [
+        {
+          publicationNumber: 'NO_RESULTS',
+          title: 'No patents found',
+          abstract: 'PatentScope returned no results',
+          source: 'PatentScope'
+        }
+      ];
     }
 
     console.log(`Total unique patents extracted: ${uniquePatents.length}`);
     return uniquePatents;
   }
 
-  // Função principal de busca
   async searchPatents(medicine) {
     console.log(`Starting PatentScope full-text search for: ${medicine}`);
     try {
       await this.initialize();
       await this.performSearch(medicine);
-      const patents = await this.extractResults(5);
+      const patents = await this.extractResults(5); // 5 páginas
       console.log(`PatentScope search completed: ${patents.length} patents found`);
+      await this.browser.close();
       return patents;
     } catch (error) {
       console.error('PatentScope search error:', error.message);
-      return [{
-        publicationNumber: 'ERROR',
-        title: 'Search failed',
-        abstract: error.message,
-        source: 'PatentScope'
-      }];
-    } finally {
       if (this.browser) await this.browser.close();
-      console.log('PatentScope crawler closed.');
+      return [
+        {
+          publicationNumber: 'ERROR',
+          title: 'Search failed',
+          abstract: error.message,
+          source: 'PatentScope'
+        }
+      ];
     }
   }
 }
