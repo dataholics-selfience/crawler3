@@ -5,6 +5,7 @@ class PatentScopeCrawler {
   constructor() {
     this.browser = null;
     this.page = null;
+    this.maxPatents = 15; // limitar a 15 patentes
   }
 
   async initialize() {
@@ -22,7 +23,6 @@ class PatentScopeCrawler {
 
       this.page = await this.browser.newPage();
 
-      // Bloquear imagens, CSS e fonts para acelerar
       await this.page.setRequestInterception(true);
       this.page.on('request', (req) => {
         if (['image', 'stylesheet', 'font'].includes(req.resourceType())) {
@@ -32,9 +32,7 @@ class PatentScopeCrawler {
         }
       });
 
-      await this.page.setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      );
+      await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
       await this.page.setViewport({ width: 1920, height: 1080 });
 
       logger.info('PatentScope initialized');
@@ -54,23 +52,22 @@ class PatentScopeCrawler {
     }
   }
 
-  /**
-   * Retorna apenas a primeira página de resultados.
-   * Se não conseguir extrair patentes, retorna o HTML bruto para parsing externo.
-   */
-  async searchFirstPage(medicine, maxTimeout = 60000, minPatents = 15) {
+  async searchPatents(medicine) {
     if (!this.page) throw new Error('Browser not initialized');
 
     try {
       const searchUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(medicine)})`;
       logger.info(`Searching: ${searchUrl}`);
 
-      await this.page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: maxTimeout });
+      await this.page.goto(searchUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: 60000 // timeout de 60s
+      });
 
-      // Espera dinâmica curta para elementos renderizarem
+      // Esperar a página carregar completamente (JS dinâmico)
       await this.page.waitForTimeout(8000);
 
-      const patents = await this.page.evaluate((minPatents) => {
+      const patents = await this.page.evaluate((max) => {
         const cleanText = (text) => {
           if (!text) return '';
           return text.replace(/\t+/g, ' ').replace(/\n+/g, ' ').replace(/\s{2,}/g, ' ').trim();
@@ -78,73 +75,60 @@ class PatentScopeCrawler {
 
         const results = [];
         const seen = new Set();
-        const allText = document.body.innerText;
-        const patentMatches = allText.match(/\b(WO|US|EP|CN|JP)\s*\/?\s*\d{4}\s*\/?\s*\d{5,}/gi);
+        
+        // Pegar todos os possíveis números de patente
+        const patentMatches = Array.from(document.querySelectorAll('div.result-item')).slice(0, max);
 
-        if (!patentMatches) return [];
+        for (const item of patentMatches) {
+          const pubNumberEl = item.querySelector('.publication-number');
+          const titleEl = item.querySelector('.title');
+          const abstractEl = item.querySelector('.abstract');
+          const applicantEl = item.querySelector('.applicant');
+          const inventorEl = item.querySelector('.inventor');
 
-        const allElements = document.querySelectorAll('div, span, td, tr');
+          if (!pubNumberEl) continue;
 
-        for (const match of patentMatches) {
-          const number = cleanText(match);
-          if (seen.has(number)) continue;
-          seen.add(number);
+          const publicationNumber = cleanText(pubNumberEl.textContent);
+          if (seen.has(publicationNumber)) continue;
+          seen.add(publicationNumber);
 
-          for (const el of allElements) {
-            const text = el.textContent || '';
-            if (text.includes(number) && text.length > 100 && text.length < 3000) {
-              const lines = text.split('\n').filter(l => l.trim().length > 20);
-
-              if (lines.length > 0 && !text.includes('Download') && !text.includes('Authority')) {
-                const title = lines.find(l => l.length > 30) || lines[0] || '';
-                const applicant = text.match(/(?:Applicant|Assignee)[:\s]+([^\n]{10,100})/i);
-                const inventor = text.match(/Inventor[:\s]+([^\n]{10,100})/i);
-
-                results.push({
-                  publicationNumber: number,
-                  title: cleanText(title).substring(0, 200),
-                  abstract: cleanText(text).substring(0, 500),
-                  applicant: applicant ? cleanText(applicant[1]) : '',
-                  inventor: inventor ? cleanText(inventor[1]) : '',
-                  source: 'PatentScope'
-                });
-                break;
-              }
-            }
-          }
-
-          if (results.length >= minPatents) break; // Garantir pelo menos 15 patentes
+          results.push({
+            publicationNumber,
+            title: titleEl ? cleanText(titleEl.textContent).substring(0, 200) : '',
+            abstract: abstractEl ? cleanText(abstractEl.textContent).substring(0, 500) : '',
+            applicant: applicantEl ? cleanText(applicantEl.textContent) : '',
+            inventor: inventorEl ? cleanText(inventorEl.textContent) : '',
+            source: 'PatentScope'
+          });
         }
 
         return results;
-      }, minPatents);
+      }, this.maxPatents);
 
-      if (!patents || patents.length === 0) {
-        logger.warn('No structured patents found, returning HTML for external parsing');
-        const html = await this.page.content();
-        return [
-          {
-            publicationNumber: 'HTML_DUMP',
-            title: 'Raw HTML snapshot (to be parsed by AI)',
-            abstract: html,
-            source: 'PatentScope'
-          }
-        ];
+      if (patents.length === 0) {
+        return [{
+          publicationNumber: 'NO_RESULTS',
+          title: 'No patents found',
+          abstract: `Search for "${medicine}" returned no results`,
+          applicant: '',
+          inventor: '',
+          source: 'PatentScope'
+        }];
       }
 
       logger.info(`Found ${patents.length} patents`);
-      return patents;
 
+      return patents;
     } catch (error) {
       logger.error('PatentScope search failed', error);
-      return [
-        {
-          publicationNumber: 'ERROR',
-          title: 'Search failed',
-          abstract: error.message,
-          source: 'PatentScope'
-        }
-      ];
+      return [{
+        publicationNumber: 'ERROR',
+        title: 'Search failed',
+        abstract: error.message,
+        applicant: '',
+        inventor: '',
+        source: 'PatentScope'
+      }];
     }
   }
 }
