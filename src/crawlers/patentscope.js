@@ -1,5 +1,4 @@
-// src/crawlers/patentscope.js
-const puppeteer = require('puppeteer'); // Puppeteer completo
+const puppeteer = require('puppeteer');
 const logger = require('../utils/logger');
 
 class PatentScopeCrawler {
@@ -7,14 +6,13 @@ class PatentScopeCrawler {
     this.browser = null;
     this.page = null;
     this.maxRetries = 3;
-    this.retryDelay = 2000; // 2 segundos
   }
 
   async initialize() {
     try {
       logger.info('Initializing PatentScope browser...');
       this.browser = await puppeteer.launch({
-        headless: 'new', // modo headless moderno
+        headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
       });
       this.page = await this.browser.newPage();
@@ -29,53 +27,54 @@ class PatentScopeCrawler {
   async search(medicine, limit = 10) {
     if (!this.page) throw new Error('Browser not initialized');
 
-    const url = `https://patentscope.wipo.int/search/en/result.jsf?query=${encodeURIComponent(medicine)}`;
-    let attempt = 0;
-    let results = [];
+    const searchUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=${encodeURIComponent(medicine)}`;
 
-    while (attempt < this.maxRetries) {
+    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
-        logger.info(`Searching PatentScope patents (attempt ${attempt + 1})...`);
-        await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        logger.info(`Searching PatentScope patents (attempt ${attempt})...`);
+        await this.page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 60000 });
 
-        // Espera os resultados aparecerem
-        await this.page.waitForSelector('.result-list', { timeout: 15000 });
+        // Forçar scroll para garantir carregamento de resultados JS
+        await this.page.evaluate(() => window.scrollBy(0, window.innerHeight));
+        await this.page.waitForTimeout(2000); // espera extra 2s
 
-        // Extrai os dados
-        results = await this.page.$$eval('.result-item', (nodes, max) => {
-          return nodes.slice(0, max).map(node => {
-            const titleEl = node.querySelector('.result-title a');
-            const link = titleEl ? titleEl.href : null;
-            const title = titleEl ? titleEl.textContent.trim() : null;
-            const publication = node.querySelector('.result-publication')?.textContent.trim() || null;
-            const applicant = node.querySelector('.result-applicant')?.textContent.trim() || null;
-            return { title, link, publication, applicant };
+        // Espera pelo container de resultados
+        await this.page.waitForSelector('.result-list', { timeout: 30000 });
+
+        // Extrair os dados
+        const patents = await this.page.evaluate((limit) => {
+          const items = Array.from(document.querySelectorAll('.result-list .result-item'));
+          return items.slice(0, limit).map(item => {
+            const titleEl = item.querySelector('.title a');
+            const applicantsEl = item.querySelector('.applicants');
+            const publicationDateEl = item.querySelector('.publicationDate');
+
+            return {
+              title: titleEl ? titleEl.innerText.trim() : null,
+              link: titleEl ? titleEl.href : null,
+              applicants: applicantsEl ? applicantsEl.innerText.trim() : null,
+              publicationDate: publicationDateEl ? publicationDateEl.innerText.trim() : null,
+            };
           });
         }, limit);
 
-        logger.info(`PatentScope search completed: ${results.length} results`);
-        break;
+        logger.info(`Found ${patents.length} patents for "${medicine}"`);
+        return patents;
       } catch (error) {
-        attempt++;
-        logger.warn(`Attempt ${attempt} failed for PatentScope:`, error);
-        if (attempt >= this.maxRetries) throw error;
-        await new Promise(r => setTimeout(r, this.retryDelay));
+        logger.warn(`Attempt ${attempt} failed for PatentScope: ${error.message}`);
+        if (attempt === this.maxRetries) throw error;
+        await this.page.waitForTimeout(2000); // espera antes de tentar novamente
       }
     }
-
-    return results;
   }
 
   async close() {
-    if (this.browser) {
-      try {
-        await this.browser.close();
-        logger.info('PatentScope browser closed');
-      } catch (error) {
-        logger.error('Error closing PatentScope browser', error);
-      }
-      this.browser = null;
-      this.page = null;
+    try {
+      if (this.page) await this.page.close();
+      if (this.browser) await this.browser.close();
+      logger.info('PatentScope browser closed');
+    } catch (error) {
+      logger.error('Error closing PatentScope browser', error);
     }
   }
 }
