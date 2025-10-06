@@ -27,31 +27,28 @@ class PatentScopeCrawler {
     const url = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(searchTerm)})`;
     console.log(`Navigating to full-text URL: ${url}`);
     await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-    // Espera o primeiro resultado aparecer
-    await this.page.waitForSelector('table.resultList tbody tr', { timeout: 60000 });
-    console.log('Search page loaded with results');
+    // Dá tempo para renderização AJAX
+    await this.page.waitForTimeout(5000);
+    console.log('Search page loaded');
   }
 
   async extractResultsFromPage() {
-    // Pega HTML das linhas de resultados
+    // Captura todo o HTML principal da página de resultados
     const html = await this.page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll('table.resultList tbody tr'));
-      return rows.map(row => row.innerHTML).join('\n');
+      const container = document.querySelector('#resultDiv, .resultsList, .ps-results'); // possíveis divs de resultados
+      return container ? container.innerHTML : '';
     });
 
     if (!html) return [];
 
-    // Passa o HTML para o GroqParser
-    const prompt = `Extract patent information from the following HTML of PatentScope results.
-Return a JSON array where each item has:
+    const prompt = `Extract all patents from the following PatentScope HTML.
+Return a JSON array with:
 - publicationNumber
 - title
 - abstract
 - inventor
 - applicant
 - source ("PatentScope")
-
 HTML:
 ${html.substring(0, 30000)}
 Return ONLY valid JSON array.`;
@@ -69,20 +66,12 @@ Return ONLY valid JSON array.`;
 
   async goToNextPage() {
     try {
-      const nextButton = await this.page.$('a[title*="Next"], a.paginationNext');
-
-      if (!nextButton) {
-        console.log('No next page button found');
-        return false;
-      }
-
+      const nextButton = await this.page.$('a[title*="Next"], a.paginationNext, a:contains("Next")');
+      if (!nextButton) return false;
       await Promise.all([
-        this.page.waitForSelector('table.resultList tbody tr', { timeout: 30000 }),
+        this.page.waitForTimeout(3000), // aguarda carregamento
         nextButton.click()
       ]);
-
-      await this.page.waitForTimeout(2000);
-      console.log('Moved to next page');
       return true;
     } catch (e) {
       console.log('Failed to go to next page:', e.message);
@@ -102,23 +91,19 @@ Return ONLY valid JSON array.`;
       if (!hasNext) break;
     }
 
-    // Deduplica
     const uniquePatents = Array.from(
       new Map(allPatents.map(p => [p.publicationNumber, p])).values()
     );
 
     if (!uniquePatents.length) {
-      return [
-        {
-          publicationNumber: 'NO_RESULTS',
-          title: 'No patents found',
-          abstract: 'PatentScope returned no results',
-          source: 'PatentScope'
-        }
-      ];
+      return [{
+        publicationNumber: 'NO_RESULTS',
+        title: 'No patents found',
+        abstract: 'PatentScope returned no results',
+        source: 'PatentScope'
+      }];
     }
 
-    console.log(`Total unique patents extracted: ${uniquePatents.length}`);
     return uniquePatents;
   }
 
@@ -134,14 +119,12 @@ Return ONLY valid JSON array.`;
     } catch (error) {
       console.error('PatentScope search error:', error.message);
       if (this.browser) await this.browser.close();
-      return [
-        {
-          publicationNumber: 'ERROR',
-          title: 'Search failed',
-          abstract: error.message,
-          source: 'PatentScope'
-        }
-      ];
+      return [{
+        publicationNumber: 'ERROR',
+        title: 'Search failed',
+        abstract: error.message,
+        source: 'PatentScope'
+      }];
     }
   }
 }
