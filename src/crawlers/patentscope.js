@@ -1,61 +1,67 @@
 // src/crawlers/patentscope.js
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 const logger = require('../utils/logger');
 
 class PatentScopeCrawler {
   constructor() {
     this.browser = null;
     this.page = null;
-    this.maxRetries = 3; // retries automáticos
+    this.maxRetries = 3;
+    this.timeout = 30000; // Timeout para esperar elementos
   }
 
   async initialize() {
     try {
       this.browser = await puppeteer.launch({
-        headless: true,
+        headless: 'new', // novo modo headless confiável
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
       });
       this.page = await this.browser.newPage();
       await this.page.setViewport({ width: 1280, height: 800 });
+      logger.info('PatentScope browser initialized');
     } catch (error) {
-      logger.error('PatentScopeCrawler initialize error:', error);
+      logger.error('Failed to initialize PatentScope browser', error);
       throw error;
     }
   }
 
-  async search(query, limit = 10) {
+  async search(medicine, limit = 10) {
     if (!this.page) throw new Error('Crawler not initialized');
+    const results = [];
 
-    const url = `https://patentscope.wipo.int/search/en/detail.jsf?docId=&query=${encodeURIComponent(query)}`;
-    let results = [];
+    const query = encodeURIComponent(medicine);
+    const url = `https://patentscope.wipo.int/search/en/search.jsf?query=${query}`;
 
-    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+    let attempt = 0;
+    while (attempt < this.maxRetries) {
       try {
+        logger.info(`PatentScope attempt ${attempt + 1} for ${medicine}`);
         await this.page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-        await this.page.waitForSelector('.result-list', { timeout: 15000 });
 
-        results = await this.page.evaluate((limit) => {
-          const nodes = Array.from(document.querySelectorAll('.result-item'));
-          return nodes.slice(0, limit).map((node) => {
-            const titleNode = node.querySelector('.title a');
-            const numberNode = node.querySelector('.publicationNumber');
-            const dateNode = node.querySelector('.publicationDate');
-            const assigneeNode = node.querySelector('.assignee');
-            return {
-              title: titleNode?.innerText || '',
-              link: titleNode?.href || '',
-              publicationNumber: numberNode?.innerText || '',
-              publicationDate: dateNode?.innerText || '',
-              assignee: assigneeNode?.innerText || '',
-            };
+        // Esperar resultados
+        await this.page.waitForSelector('.result-item', { timeout: this.timeout });
+
+        // Extrair dados
+        const patents = await this.page.evaluate((limit) => {
+          const items = Array.from(document.querySelectorAll('.result-item')).slice(0, limit);
+          return items.map(item => {
+            const title = item.querySelector('.title')?.innerText.trim() || '';
+            const publicationNumber = item.querySelector('.publication-number')?.innerText.trim() || '';
+            const publicationDate = item.querySelector('.publication-date')?.innerText.trim() || '';
+            const assignee = item.querySelector('.assignee')?.innerText.trim() || '';
+            const linkEl = item.querySelector('.title a');
+            const link = linkEl ? linkEl.href : '';
+            return { title, publicationNumber, publicationDate, assignee, link };
           });
         }, limit);
 
-        break; // sucesso, sai do loop
-      } catch (err) {
-        logger.warn(`Attempt ${attempt} failed for PatentScope:`, err);
-        if (attempt === this.maxRetries) throw err;
-        await new Promise(r => setTimeout(r, 3000)); // espera antes de tentar novamente
+        results.push(...patents);
+        logger.info(`PatentScope search completed: ${patents.length} results`);
+        break; // sucesso, sair do loop
+      } catch (error) {
+        logger.warn(`Attempt ${attempt + 1} failed for PatentScope: ${error.message}`);
+        attempt += 1;
+        if (attempt >= this.maxRetries) throw error;
       }
     }
 
@@ -66,8 +72,9 @@ class PatentScopeCrawler {
     try {
       if (this.page) await this.page.close();
       if (this.browser) await this.browser.close();
+      logger.info('PatentScope browser closed');
     } catch (error) {
-      logger.error('Error closing PatentScopeCrawler:', error);
+      logger.error('Error closing PatentScope browser', error);
     }
   }
 }
