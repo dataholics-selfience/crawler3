@@ -41,77 +41,67 @@ class PatentScopeCrawler {
     }
   }
 
-  async search(medicine, maxPages = 3) {
+  async search(medicine) {
     if (!this.page) throw new Error('Browser not initialized');
 
+    const searchUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(medicine)})`;
+    logger.info(`Navigating to: ${searchUrl}`);
+
     try {
-      const searchUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(medicine)})`;
-      logger.info(`Navigating to: ${searchUrl}`);
+      await this.page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+      await this.page.waitForTimeout(7000); // aguarda scripts JS do PrimeFaces
+      let retries = 0;
+      let patents = [];
 
-      await this.page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+      while (retries < 3 && patents.length === 0) {
+        try {
+          patents = await this.page.evaluate(() => {
+            const cleanText = (text) => text?.replace(/\s+/g, ' ').trim();
+            const results = [];
+            const seen = new Set();
 
-      await this.page.waitForTimeout(5000); // esperar JS renderizar
-
-      const allPatents = [];
-
-      for (let pageIndex = 1; pageIndex <= maxPages; pageIndex++) {
-        logger.info(`Extracting page ${pageIndex}...`);
-
-        // Extração de dados da página dinâmica
-        const pagePatents = await this.page.evaluate(() => {
-          const cleanText = (text) => text.replace(/\s+/g, ' ').trim();
-          const results = [];
-          const seenNumbers = new Set();
-
-          // Tentando pegar títulos, abstracts e números de patente
-          document.querySelectorAll('div.resultItem, div.searchResultRow').forEach(el => {
-            const numberEl = el.querySelector('.publicationNumber, .patentNumber');
-            const titleEl = el.querySelector('.title, .patentTitle');
-            const abstractEl = el.querySelector('.abstract, .patentAbstract');
-            if (numberEl && !seenNumbers.has(numberEl.textContent)) {
-              seenNumbers.add(numberEl.textContent);
-              results.push({
-                publicationNumber: cleanText(numberEl.textContent),
-                title: titleEl ? cleanText(titleEl.textContent) : '',
-                abstract: abstractEl ? cleanText(abstractEl.textContent) : '',
-                source: 'PatentScope',
-              });
-            }
+            document.querySelectorAll('.resultItem, .searchResultRow').forEach(el => {
+              const num = el.querySelector('.publicationNumber, .patentNumber');
+              const title = el.querySelector('.title, .patentTitle');
+              const abs = el.querySelector('.abstract, .patentAbstract');
+              if (num && !seen.has(num.textContent)) {
+                seen.add(num.textContent);
+                results.push({
+                  publicationNumber: cleanText(num.textContent),
+                  title: cleanText(title?.textContent || ''),
+                  abstract: cleanText(abs?.textContent || ''),
+                  source: 'PatentScope'
+                });
+              }
+            });
+            return results;
           });
 
-          return results;
-        });
-
-        logger.info(`Found ${pagePatents.length} patents on page ${pageIndex}`);
-        allPatents.push(...pagePatents);
-
-        // Tentar próxima página
-        if (pageIndex < maxPages) {
-          const nextBtn = await this.page.$('a[title*="Next"], .pagination-next');
-          if (!nextBtn) {
-            logger.info('No next button found');
-            break;
+          if (patents.length === 0) {
+            retries++;
+            await this.page.waitForTimeout(5000);
           }
-
-          await Promise.all([
-            this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
-            nextBtn.click(),
-          ]);
-
-          await this.page.waitForTimeout(3000);
+        } catch (err) {
+          logger.warn(`Retry ${retries + 1} on page evaluation`);
+          retries++;
+          await this.page.waitForTimeout(5000);
         }
       }
 
-      // Deduplicação final
-      const uniquePatents = Array.from(new Map(allPatents.map(p => [p.publicationNumber, p])).values());
+      // Se não encontrou nada, retorna o HTML para o n8n processar
+      if (patents.length === 0) {
+        logger.warn('No structured patents found, returning raw HTML snapshot');
+        const htmlContent = await this.page.content();
+        return [{
+          publicationNumber: 'HTML_DUMP',
+          title: 'Raw HTML snapshot (to be parsed by AI)',
+          abstract: htmlContent.slice(0, 50000), // evita payload gigante
+          source: 'PatentScope'
+        }];
+      }
 
-      logger.info(`Total unique patents: ${uniquePatents.length}`);
-      return uniquePatents.length > 0 ? uniquePatents : [{
-        publicationNumber: 'NO_RESULTS',
-        title: 'No patents found',
-        abstract: 'PatentScope returned no results',
-        source: 'PatentScope',
-      }];
+      logger.info(`✅ Found ${patents.length} patents in PatentScope`);
+      return patents;
 
     } catch (error) {
       logger.error('PatentScope search failed', error);
@@ -125,7 +115,7 @@ class PatentScopeCrawler {
   }
 
   async searchPatents(medicine) {
-    return await this.search(medicine, 3);
+    return await this.search(medicine);
   }
 }
 
