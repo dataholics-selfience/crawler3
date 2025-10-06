@@ -3,7 +3,6 @@ const GroqParser = require('../services/groqParser');
 
 class PatentScopeCrawler {
   constructor() {
-    this.baseUrl = 'https://patentscope.wipo.int/search/en/search.jsf';
     this.browser = null;
     this.page = null;
     this.groqParser = new GroqParser();
@@ -25,24 +24,26 @@ class PatentScopeCrawler {
   }
 
   async performSearch(searchTerm) {
-    const fullTextUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(searchTerm)})`;
-    console.log(`Navigating to full-text URL: ${fullTextUrl}`);
-    await this.page.goto(fullTextUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    // Espera o bloco de resultados aparecer
-    await this.page.waitForSelector('div#resultDiv', { timeout: 60000 });
-    console.log('Full-text search page loaded');
+    const url = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(searchTerm)})`;
+    console.log(`Navigating to full-text URL: ${url}`);
+    await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+    // Espera o primeiro resultado aparecer
+    await this.page.waitForSelector('table.resultList tbody tr', { timeout: 60000 });
+    console.log('Search page loaded with results');
   }
 
   async extractResultsFromPage() {
+    // Pega HTML das linhas de resultados
     const html = await this.page.evaluate(() => {
-      const container = document.querySelector('div#resultDiv');
-      return container ? container.innerHTML : '';
+      const rows = Array.from(document.querySelectorAll('table.resultList tbody tr'));
+      return rows.map(row => row.innerHTML).join('\n');
     });
 
     if (!html) return [];
 
-    // Usa GroqParser para extrair JSON estruturado
-    const prompt = `Extract patent information from the following HTML of a PatentScope results page.
+    // Passa o HTML para o GroqParser
+    const prompt = `Extract patent information from the following HTML of PatentScope results.
 Return a JSON array where each item has:
 - publicationNumber
 - title
@@ -50,6 +51,7 @@ Return a JSON array where each item has:
 - inventor
 - applicant
 - source ("PatentScope")
+
 HTML:
 ${html.substring(0, 30000)}
 Return ONLY valid JSON array.`;
@@ -57,7 +59,6 @@ Return ONLY valid JSON array.`;
     try {
       const response = await this.groqParser.askGroq(prompt);
       if (!response) throw new Error('Groq returned null');
-
       const results = JSON.parse(response);
       return results.map(p => ({ ...p, source: 'PatentScope' }));
     } catch (e) {
@@ -68,12 +69,15 @@ Return ONLY valid JSON array.`;
 
   async goToNextPage() {
     try {
-      // PatentScope usa AJAX; próximo botão
       const nextButton = await this.page.$('a[title*="Next"], a.paginationNext');
-      if (!nextButton) return false;
+
+      if (!nextButton) {
+        console.log('No next page button found');
+        return false;
+      }
 
       await Promise.all([
-        this.page.waitForSelector('div#resultDiv', { timeout: 30000 }),
+        this.page.waitForSelector('table.resultList tbody tr', { timeout: 30000 }),
         nextButton.click()
       ]);
 
@@ -88,8 +92,8 @@ Return ONLY valid JSON array.`;
 
   async extractResults(maxPages = 5) {
     let allPatents = [];
-    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
-      console.log(`Processing page ${pageNum}...`);
+    for (let i = 1; i <= maxPages; i++) {
+      console.log(`Processing page ${i}...`);
       const pageResults = await this.extractResultsFromPage();
       console.log(`Extracted ${pageResults.length} patents from current page`);
       allPatents = allPatents.concat(pageResults);
@@ -98,7 +102,7 @@ Return ONLY valid JSON array.`;
       if (!hasNext) break;
     }
 
-    // Deduplica por publicationNumber
+    // Deduplica
     const uniquePatents = Array.from(
       new Map(allPatents.map(p => [p.publicationNumber, p])).values()
     );
@@ -119,11 +123,11 @@ Return ONLY valid JSON array.`;
   }
 
   async searchPatents(medicine) {
-    console.log(`Starting PatentScope full-text search for: ${medicine}`);
+    console.log(`Starting PatentScope search for: ${medicine}`);
     try {
       await this.initialize();
       await this.performSearch(medicine);
-      const patents = await this.extractResults(5); // 5 páginas
+      const patents = await this.extractResults(5);
       console.log(`PatentScope search completed: ${patents.length} patents found`);
       await this.browser.close();
       return patents;
