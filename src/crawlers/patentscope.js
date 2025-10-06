@@ -27,15 +27,13 @@ class PatentScopeCrawler {
     const url = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(searchTerm)})`;
     console.log(`Navigating to full-text URL: ${url}`);
     await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    // Dá tempo para renderização AJAX
-    await this.page.waitForTimeout(5000);
+    await this.page.waitForTimeout(5000); // esperar AJAX
     console.log('Search page loaded');
   }
 
   async extractResultsFromPage() {
-    // Captura todo o HTML principal da página de resultados
     const html = await this.page.evaluate(() => {
-      const container = document.querySelector('#resultDiv, .resultsList, .ps-results'); // possíveis divs de resultados
+      const container = document.querySelector('#resultDiv, .resultsList, .ps-results');
       return container ? container.innerHTML : '';
     });
 
@@ -66,12 +64,16 @@ Return ONLY valid JSON array.`;
 
   async goToNextPage() {
     try {
-      const nextButton = await this.page.$('a[title*="Next"], a.paginationNext, a:contains("Next")');
-      if (!nextButton) return false;
-      await Promise.all([
-        this.page.waitForTimeout(3000), // aguarda carregamento
-        nextButton.click()
-      ]);
+      const nextPageNumber = await this.page.evaluate(() => {
+        const anchors = Array.from(document.querySelectorAll('a'));
+        const nextAnchor = anchors.find(a => /Next|›/.test(a.innerText));
+        if (!nextAnchor) return null;
+        nextAnchor.click();
+        return true;
+      });
+
+      if (!nextPageNumber) return false;
+      await this.page.waitForTimeout(5000); // esperar carregamento
       return true;
     } catch (e) {
       console.log('Failed to go to next page:', e.message);
