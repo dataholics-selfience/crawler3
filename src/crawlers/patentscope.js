@@ -32,6 +32,7 @@ class PatentScopeCrawler {
 
   async search(medicine) {
     if (!medicine) throw new Error("Medicine query is required");
+
     await this.initBrowser();
     const page = await this.browser.newPage();
 
@@ -41,16 +42,13 @@ class PatentScopeCrawler {
         waitUntil: "networkidle2",
       });
 
-      // Digita o termo de busca
       await page.type('input[name="query"]', medicine);
 
-      // Submete o formulário
       await Promise.all([
         page.click('button[type="submit"]'),
         page.waitForNavigation({ waitUntil: "networkidle2" }),
       ]);
 
-      // Extrai resultados
       const results = await page.evaluate(() => {
         return Array.from(document.querySelectorAll(".resultItem")).map((item) => ({
           title: item.querySelector(".resultTitle")?.innerText || "",
@@ -69,4 +67,4 @@ class PatentScopeCrawler {
   }
 }
 
-module.exports = PatentScopeCrawler; // exporta a classe, não a instância
+module.exports = PatentScopeCrawler; // exporta a classe
