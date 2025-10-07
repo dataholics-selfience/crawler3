@@ -6,52 +6,53 @@ async function searchPatents(medicine) {
 
   const browser = await puppeteer.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+    ],
   });
 
   const page = await browser.newPage();
   const url = `https://patentscope.wipo.int/search/en/result.jsf?query=${encodeURIComponent(
     medicine
   )}`;
-  await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
 
-  // Aguarda resultados principais
+  await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
   await page.waitForTimeout(5000);
 
   let patents = [];
   try {
     patents = await page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll(".result-item"));
-      return rows.slice(0, 15).map((row) => ({
+      const results = Array.from(document.querySelectorAll(".result-item"));
+      return results.slice(0, 15).map((item) => ({
         title:
-          row.querySelector(".title")?.innerText.trim() ||
+          item.querySelector(".title")?.innerText.trim() ||
           "No title available",
         link:
-          row.querySelector("a")?.href ||
+          item.querySelector("a")?.href ||
           "https://patentscope.wipo.int/search/en/",
         publication:
-          row.querySelector(".pubNumber")?.innerText.trim() ||
-          "N/A",
+          item.querySelector(".pubNumber")?.innerText.trim() || "N/A",
         applicant:
-          row.querySelector(".applicant")?.innerText.trim() ||
-          "N/A",
+          item.querySelector(".applicant")?.innerText.trim() || "N/A",
         date:
-          row.querySelector(".pubDate")?.innerText.trim() ||
-          "N/A",
+          item.querySelector(".pubDate")?.innerText.trim() || "N/A",
       }));
     });
   } catch (err) {
-    console.error("⚠️ Could not extract text normally:", err.message);
+    console.error("⚠️ Could not extract structured data:", err.message);
   }
 
-  // Se não encontrou nada, tenta OCR
+  // Fallback via OCR se não achou nada
   if (!patents || patents.length === 0) {
-    console.log("📸 No structured data found, using OCR fallback...");
+    console.log("📸 Using OCR fallback...");
     const screenshot = "/tmp/patentscope.png";
     await page.screenshot({ path: screenshot, fullPage: true });
 
-    const ocrResult = await Tesseract.recognize(screenshot, "eng");
-    const text = ocrResult.data.text;
+    const ocr = await Tesseract.recognize(screenshot, "eng");
+    const text = ocr.data.text;
     const lines = text.split("\n").filter((l) => l.trim().length > 10);
 
     patents = lines.slice(0, 15).map((line) => ({
@@ -64,7 +65,7 @@ async function searchPatents(medicine) {
   }
 
   await browser.close();
-  console.log(`✅ Found ${patents.length} patents on PatentScope`);
+  console.log(`✅ Found ${patents.length} results from PatentScope`);
   return patents;
 }
 
