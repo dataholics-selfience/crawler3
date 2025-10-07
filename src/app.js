@@ -33,8 +33,8 @@ app.get('/api/data/patentscope/patents', async (req, res) => {
 
   const crawler = new PatentScopeCrawler();
   try {
-    await crawler.initBrowser();  // inicializa browser sem bloquear a app
-    const patents = await crawler.search(medicine); // método que retorna HTML + dados
+    await crawler.initBrowser();  // inicializa browser apenas quando necessário
+    const patents = await crawler.search(medicine); // retorna HTML + dados
     res.json({ success: true, data: patents });
   } catch (err) {
     logger.error('PatentScope crawler failed', err);
