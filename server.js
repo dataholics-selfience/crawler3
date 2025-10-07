@@ -23,18 +23,16 @@ const shutdown = (signal) => {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-// Handle unhandled promise rejections safely
+// Handle unhandled promise rejections safely (log only — don't kill process)
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
-
-  // Apenas loga o erro, não fecha o servidor automaticamente
-  // Isso garante que outros crawlers, como INPI, continuem funcionando
+  logger.error('Unhandled Rejection at:', { promise, reason });
+  // não encerra o servidor automaticamente para não interromper INPI
 });
 
 // Catch uncaught exceptions without stopping other services
 process.on('uncaughtException', (err) => {
   logger.error('Uncaught Exception:', err);
-  // Não encerra o servidor, só loga
+  // não encerra o servidor automaticamente
 });
 
 module.exports = server;
