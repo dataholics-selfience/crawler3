@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
-const PatentScopeCrawler = require("../crawlers/patentscope");
+const PatentScopeCrawler = require('../crawlers/patentscope');
+console.log('PatentScope is instance?', typeof PatentScopeCrawler.search === 'function');
 
 const patentscopeCrawler = new PatentScopeCrawler(); // instância ✅
 
