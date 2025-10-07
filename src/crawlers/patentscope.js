@@ -1,69 +1,60 @@
 const puppeteer = require("puppeteer");
-const Tesseract = require("tesseract.js");
 
 class PatentScopeCrawler {
   constructor() {
     this.browser = null;
-    this.page = null;
   }
 
-  async init() {
-    this.browser = await puppeteer.launch({
-      headless: "new",
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
-    this.page = await this.browser.newPage();
-    this.page.setDefaultNavigationTimeout(60000); // timeout de 60s
+  async initBrowser() {
+    if (!this.browser) {
+      this.browser = await puppeteer.launch({
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"]
+      });
+    }
   }
 
-  async close() {
-    if (this.page) await this.page.close();
-    if (this.browser) await this.browser.close();
+  async closeBrowser() {
+    if (this.browser) {
+      await this.browser.close();
+      this.browser = null;
+    }
   }
 
-  async searchPatents(medicine) {
+  async search(medicine) {
+    await this.initBrowser();
+    const page = await this.browser.newPage();
+
     try {
-      await this.init();
-
-      // URL de pesquisa no PatentScope
-      const searchUrl = `https://patentscope.wipo.int/search/en/search.jsf`;
-
-      await this.page.goto(searchUrl, { waitUntil: "networkidle2" });
-
-      // Preencher campo de busca
-      await this.page.type("#query", medicine);
-      await Promise.all([
-        this.page.click("input[type='submit']"),
-        this.page.waitForNavigation({ waitUntil: "networkidle2" }),
-      ]);
-
-      // Extrair resultados da página
-      const results = await this.page.evaluate(() => {
-        const patents = [];
-        const items = document.querySelectorAll(".resultItem");
-        items.forEach((item) => {
-          const title = item.querySelector(".title")?.innerText || "";
-          const link = item.querySelector("a")?.href || "";
-          const abstract = item.querySelector(".abstract")?.innerText || "";
-          patents.push({ title, abstract, link });
-        });
-        return patents;
+      console.log(`Searching PatentScope patents for: ${medicine}`);
+      await page.goto("https://patentscope.wipo.int/search/en/search.jsf", {
+        waitUntil: "networkidle2",
       });
 
-      // Se nenhum resultado textual, tenta OCR
-      if (results.length === 0) {
-        console.log("📄 No textual results found, trying OCR...");
-        const screenshot = await this.page.screenshot();
-        const ocrResult = await Tesseract.recognize(screenshot, "eng");
-        return [{ title: medicine, abstract: ocrResult.data.text, link: "" }];
-      }
+      // Seleciona o input de busca
+      await page.type('input[name="query"]', medicine);
+
+      // Submete o formulário
+      await Promise.all([
+        page.click('button[type="submit"]'),
+        page.waitForNavigation({ waitUntil: "networkidle2" }),
+      ]);
+
+      // Extração simples dos resultados (ajuste selectors conforme necessidade)
+      const results = await page.evaluate(() => {
+        return Array.from(document.querySelectorAll(".resultItem")).map(item => ({
+          title: item.querySelector(".resultTitle")?.innerText || "",
+          publicationNumber: item.querySelector(".publicationNumber")?.innerText || "",
+          link: item.querySelector("a")?.href || "",
+        }));
+      });
 
       return results;
     } catch (err) {
-      console.error("PatentScope crawler error:", err.message);
+      console.error("PatentScope crawler error:", err);
       throw err;
     } finally {
-      await this.close();
+      await page.close();
     }
   }
 }
