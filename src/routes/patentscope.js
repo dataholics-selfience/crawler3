@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const patentscopeCrawler = require("../crawlers/patentscope"); // instância única
+const patentscopeCrawler = require("../crawlers/patentscope"); // ✅ já é instância
 
 // PatentScope route
 router.get("/patentscope/patents", async (req, res) => {
