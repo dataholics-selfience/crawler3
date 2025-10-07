@@ -60,3 +60,38 @@ app.get('/api/data/inpi/patents', async (req, res) => {
     });
   } finally {
     await crawler.close();
+  }
+});
+
+// Patentscope route (exemplo)
+app.get('/api/data/patentscope', async (req, res) => {
+  const { medicine } = req.query;
+  if (!medicine)
+    return res
+      .status(400)
+      .json({ success: false, message: 'Missing medicine parameter' });
+
+  const crawler = new PatentScopeCrawler();
+  try {
+    await crawler.initialize();
+    const patents = await crawler.searchPatents(medicine);
+    res.json({ success: true, data: patents });
+  } catch (err) {
+    logger.error('Patentscope crawler failed', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch Patentscope patents',
+      message: err.message
+    });
+  } finally {
+    await crawler.close();
+  }
+});
+
+// Start server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  logger.info(`Server running on port ${PORT}`);
+});
+
+module.exports = app;
