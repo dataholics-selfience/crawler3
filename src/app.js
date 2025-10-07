@@ -9,7 +9,8 @@ const logger = require('./utils/logger');
 
 dotenv.config();
 
-const InpiCrawler = require('./crawlers/inpi');
+// Corrige o require do INPI sem tocar no crawler
+const InpiCrawler = require('./crawlers/inipiCrawler');
 const PatentScopeCrawler = require('./crawlers/patentscope');
 
 const app = express();
@@ -30,7 +31,7 @@ app.use(rateLimit({
 // Health route
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
-// INPI patents route (não mudou)
+// INPI patents route (não alterado)
 app.get('/api/data/inpi/patents', async (req, res) => {
   const { medicine } = req.query;
   if (!medicine) return res.status(400).json({ success: false, message: 'Missing medicine parameter' });
@@ -48,21 +49,21 @@ app.get('/api/data/inpi/patents', async (req, res) => {
   }
 });
 
-// PatentScope patents route (refatorado com OCR)
+// PatentScope patents route (refatorado para buscar HTML)
 app.get('/api/data/patentscope/patents', async (req, res) => {
   const { medicine } = req.query;
   if (!medicine) return res.status(400).json({ success: false, message: 'Missing medicine parameter' });
 
   const crawler = new PatentScopeCrawler();
   try {
-    await crawler.initialize();
-    const patents = await crawler.searchPatents(medicine); // usa o método correto
+    await crawler.initBrowser();      // inicializa browser
+    const patents = await crawler.search(medicine); // chama search que retorna HTML
     res.json({ success: true, data: patents });
   } catch (err) {
     logger.error('PatentScope crawler failed', err);
     res.status(500).json({ success: false, error: 'Failed to fetch PatentScope patents', message: err.message });
   } finally {
-    await crawler.close();
+    await crawler.closeBrowser();
   }
 });
 
