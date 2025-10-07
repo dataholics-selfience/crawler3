@@ -9,8 +9,7 @@ const logger = require('./utils/logger');
 
 dotenv.config();
 
-// Ajuste da importação do INPI (nome exato do arquivo)
-const InpiCrawler = require('./crawlers/inipiCrawler');
+const InpiCrawler = require('./crawlers/inpiCrawler'); // <- aqui deve bater com o nome do arquivo
 const PatentScopeCrawler = require('./crawlers/patentscope');
 
 const app = express();
@@ -28,7 +27,7 @@ app.use(rateLimit({
   max: 60
 }));
 
-// Health route (sempre rápido)
+// Health check rápido
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
 // INPI patents route
@@ -44,24 +43,6 @@ app.get('/api/data/inpi/patents', async (req, res) => {
   } catch (err) {
     logger.error('INPI crawler failed', err);
     res.status(500).json({ success: false, error: 'Failed to fetch INPI patents', message: err.message });
-  } finally {
-    await crawler.close();
-  }
-});
-
-// PatentScope patents route (OCR / refatorado)
-app.get('/api/data/patentscope/patents', async (req, res) => {
-  const { medicine } = req.query;
-  if (!medicine) return res.status(400).json({ success: false, message: 'Missing medicine parameter' });
-
-  const crawler = new PatentScopeCrawler();
-  try {
-    await crawler.initialize();
-    const patents = await crawler.searchPatents(medicine);
-    res.json({ success: true, data: patents });
-  } catch (err) {
-    logger.error('PatentScope crawler failed', err);
-    res.status(500).json({ success: false, error: 'Failed to fetch PatentScope patents', message: err.message });
   } finally {
     await crawler.close();
   }
