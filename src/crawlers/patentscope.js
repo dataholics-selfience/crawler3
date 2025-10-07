@@ -1,75 +1,71 @@
 const puppeteer = require("puppeteer");
 const Tesseract = require("tesseract.js");
 
-async function searchPatents(medicine) {
-  console.log(`🔍 Searching PatentScope for: ${medicine}`);
+class PatentScopeCrawler {
+  constructor() {
+    this.browser = null;
+    this.page = null;
+  }
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-    ],
-  });
-
-  const page = await browser.newPage();
-  const url = `https://patentscope.wipo.int/search/en/result.jsf?query=${encodeURIComponent(
-    medicine
-  )}`;
-
-  await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
-  await page.waitForTimeout(5000);
-
-  let patents = [];
-  try {
-    patents = await page.evaluate(() => {
-      const results = Array.from(document.querySelectorAll(".result-item"));
-      return results.slice(0, 15).map((item) => ({
-        title:
-          item.querySelector(".title")?.innerText.trim() ||
-          "No title available",
-        link:
-          item.querySelector("a")?.href ||
-          "https://patentscope.wipo.int/search/en/",
-        publication:
-          item.querySelector(".pubNumber")?.innerText.trim() || "N/A",
-        applicant:
-          item.querySelector(".applicant")?.innerText.trim() || "N/A",
-        date:
-          item.querySelector(".pubDate")?.innerText.trim() || "N/A",
-      }));
+  async init() {
+    this.browser = await puppeteer.launch({
+      headless: "new",
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
     });
-  } catch (err) {
-    console.error("⚠️ Could not extract structured data:", err.message);
+    this.page = await this.browser.newPage();
+    this.page.setDefaultNavigationTimeout(60000); // timeout de 60s
   }
 
-  // Fallback via OCR se não achou nada
-  if (!patents || patents.length === 0) {
-    console.log("📸 Using OCR fallback...");
-    const screenshot = "/tmp/patentscope.png";
-    await page.screenshot({ path: screenshot, fullPage: true });
-
-    const ocr = await Tesseract.recognize(screenshot, "eng");
-    const text = ocr.data.text;
-    const lines = text.split("\n").filter((l) => l.trim().length > 10);
-
-    patents = lines.slice(0, 15).map((line) => ({
-      title: line.trim(),
-      link: url,
-      publication: "OCR Extracted",
-      applicant: "OCR Extracted",
-      date: "OCR Extracted",
-    }));
+  async close() {
+    if (this.page) await this.page.close();
+    if (this.browser) await this.browser.close();
   }
 
-  await browser.close();
-  console.log(`✅ Found ${patents.length} results from PatentScope`);
-  return patents;
+  async searchPatents(medicine) {
+    try {
+      await this.init();
+
+      // URL de pesquisa no PatentScope
+      const searchUrl = `https://patentscope.wipo.int/search/en/search.jsf`;
+
+      await this.page.goto(searchUrl, { waitUntil: "networkidle2" });
+
+      // Preencher campo de busca
+      await this.page.type("#query", medicine);
+      await Promise.all([
+        this.page.click("input[type='submit']"),
+        this.page.waitForNavigation({ waitUntil: "networkidle2" }),
+      ]);
+
+      // Extrair resultados da página
+      const results = await this.page.evaluate(() => {
+        const patents = [];
+        const items = document.querySelectorAll(".resultItem");
+        items.forEach((item) => {
+          const title = item.querySelector(".title")?.innerText || "";
+          const link = item.querySelector("a")?.href || "";
+          const abstract = item.querySelector(".abstract")?.innerText || "";
+          patents.push({ title, abstract, link });
+        });
+        return patents;
+      });
+
+      // Se nenhum resultado textual, tenta OCR
+      if (results.length === 0) {
+        console.log("📄 No textual results found, trying OCR...");
+        const screenshot = await this.page.screenshot();
+        const ocrResult = await Tesseract.recognize(screenshot, "eng");
+        return [{ title: medicine, abstract: ocrResult.data.text, link: "" }];
+      }
+
+      return results;
+    } catch (err) {
+      console.error("PatentScope crawler error:", err.message);
+      throw err;
+    } finally {
+      await this.close();
+    }
+  }
 }
 
-module.exports = { search: searchPatents };
-
-
-
+module.exports = PatentScopeCrawler;
