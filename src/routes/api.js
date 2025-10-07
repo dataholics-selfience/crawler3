@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const PatentScopeCrawler = require("./crawlers/patentscope");
 
-// Criar **uma instância global de crawler**
+// ✅ Cria a instância **uma vez**
 const patentscopeCrawler = new PatentScopeCrawler();
 
 router.get("/patentscope/patents", async (req, res) => {
@@ -20,6 +20,18 @@ router.get("/patentscope/patents", async (req, res) => {
       message: error.message,
     });
   }
+});
+
+// Fechamento do browser no shutdown
+process.on("SIGINT", async () => {
+  console.log("SIGINT received, closing browser...");
+  await patentscopeCrawler.closeBrowser();
+  process.exit(0);
+});
+process.on("SIGTERM", async () => {
+  console.log("SIGTERM received, closing browser...");
+  await patentscopeCrawler.closeBrowser();
+  process.exit(0);
 });
 
 module.exports = router;
