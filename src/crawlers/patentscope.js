@@ -5,7 +5,6 @@ class PatentScopeCrawler {
     this.browser = null;
   }
 
-  // Inicializa o navegador apenas uma vez
   async initBrowser() {
     if (!this.browser) {
       this.browser = await puppeteer.launch({
@@ -15,7 +14,6 @@ class PatentScopeCrawler {
     }
   }
 
-  // Fecha o navegador
   async closeBrowser() {
     if (this.browser) {
       await this.browser.close();
@@ -23,7 +21,6 @@ class PatentScopeCrawler {
     }
   }
 
-  // Método principal de busca
   async search(medicine) {
     await this.initBrowser();
     const page = await this.browser.newPage();
@@ -34,23 +31,20 @@ class PatentScopeCrawler {
         waitUntil: "networkidle2",
       });
 
-      // Digita o nome do medicamento no input de busca
       await page.type('input[name="query"]', medicine);
 
-      // Submete o formulário e espera a navegação
       await Promise.all([
         page.click('button[type="submit"]'),
         page.waitForNavigation({ waitUntil: "networkidle2" }),
       ]);
 
-      // Extrai resultados
-      const results = await page.evaluate(() => {
-        return Array.from(document.querySelectorAll(".resultItem")).map((item) => ({
+      const results = await page.evaluate(() =>
+        Array.from(document.querySelectorAll(".resultItem")).map((item) => ({
           title: item.querySelector(".resultTitle")?.innerText || "",
           publicationNumber: item.querySelector(".publicationNumber")?.innerText || "",
           link: item.querySelector("a")?.href || "",
-        }));
-      });
+        }))
+      );
 
       return results;
     } catch (err) {
@@ -62,5 +56,5 @@ class PatentScopeCrawler {
   }
 }
 
-// Exporta **uma instância pronta** do crawler
+// ✅ Exporta já uma instância pronta
 module.exports = new PatentScopeCrawler();
