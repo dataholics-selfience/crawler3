@@ -9,7 +9,7 @@ const logger = require('./utils/logger');
 
 dotenv.config();
 
-const InpiCrawler = require('./crawlers/inpi'); // mantém exatamente como estava
+const InpiCrawler = require('./crawlers/inpi');
 const PatentScopeCrawler = require('./crawlers/patentscope');
 
 const app = express();
@@ -30,7 +30,7 @@ app.use(rateLimit({
 // Health route
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
-// INPI patents route (funcionando como antes)
+// INPI patents route (não mudou)
 app.get('/api/data/inpi/patents', async (req, res) => {
   const { medicine } = req.query;
   if (!medicine) return res.status(400).json({ success: false, message: 'Missing medicine parameter' });
@@ -48,7 +48,7 @@ app.get('/api/data/inpi/patents', async (req, res) => {
   }
 });
 
-// PatentScope route (original, sem alterações)
+// PatentScope patents route (refatorado com OCR)
 app.get('/api/data/patentscope/patents', async (req, res) => {
   const { medicine } = req.query;
   if (!medicine) return res.status(400).json({ success: false, message: 'Missing medicine parameter' });
@@ -56,9 +56,14 @@ app.get('/api/data/patentscope/patents', async (req, res) => {
   const crawler = new PatentScopeCrawler();
   try {
     await crawler.initialize();
-    const patents = await crawler.searchPatents(medicine);
+    const patents = await crawler.searchPatents(medicine); // usa o método correto
     res.json({ success: true, data: patents });
   } catch (err) {
     logger.error('PatentScope crawler failed', err);
     res.status(500).json({ success: false, error: 'Failed to fetch PatentScope patents', message: err.message });
+  } finally {
+    await crawler.close();
   }
+});
+
+module.exports = app;
