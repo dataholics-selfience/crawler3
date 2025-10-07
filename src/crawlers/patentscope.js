@@ -9,8 +9,16 @@ class PatentScopeCrawler {
     if (!this.browser) {
       this.browser = await puppeteer.launch({
         headless: true,
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-gpu",
+          "--disable-dev-shm-usage",
+          "--no-zygote",
+          "--single-process",
+        ],
       });
+      console.log("✅ PatentScope browser initialized");
     }
   }
 
@@ -18,15 +26,17 @@ class PatentScopeCrawler {
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
+      console.log("✅ PatentScope browser closed");
     }
   }
 
   async search(medicine) {
+    if (!medicine) throw new Error("Medicine query is required");
     await this.initBrowser();
     const page = await this.browser.newPage();
 
     try {
-      console.log(`Searching PatentScope patents for: ${medicine}`);
+      console.log(`🔍 Searching PatentScope patents for: ${medicine}`);
       await page.goto("https://patentscope.wipo.int/search/en/search.jsf", {
         waitUntil: "networkidle2",
       });
@@ -34,13 +44,13 @@ class PatentScopeCrawler {
       // Digita o termo de busca
       await page.type('input[name="query"]', medicine);
 
-      // Submete o formulário e espera a navegação
+      // Submete o formulário
       await Promise.all([
         page.click('button[type="submit"]'),
         page.waitForNavigation({ waitUntil: "networkidle2" }),
       ]);
 
-      // Extrai resultados (ajuste os seletores se necessário)
+      // Extrai resultados
       const results = await page.evaluate(() => {
         return Array.from(document.querySelectorAll(".resultItem")).map((item) => ({
           title: item.querySelector(".resultTitle")?.innerText || "",
@@ -51,7 +61,7 @@ class PatentScopeCrawler {
 
       return results;
     } catch (err) {
-      console.error("PatentScope crawler error:", err);
+      console.error("❌ PatentScope crawler error:", err);
       throw err;
     } finally {
       await page.close();
@@ -59,5 +69,4 @@ class PatentScopeCrawler {
   }
 }
 
-// Exporta **uma instância única**
-module.exports = new PatentScopeCrawler();
+module.exports = PatentScopeCrawler; // exporta a classe, não a instância
