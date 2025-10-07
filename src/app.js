@@ -9,9 +9,9 @@ const logger = require('./utils/logger');
 
 dotenv.config();
 
-const InpiCrawler = require('./crawlers/inpi');
-// PatentScopeCrawler não é necessário agora para retomar INPI
-// const PatentScopeCrawler = require('./crawlers/patentscope');
+// Ajuste da importação do INPI (nome exato do arquivo)
+const InpiCrawler = require('./crawlers/inipiCrawler');
+const PatentScopeCrawler = require('./crawlers/patentscope');
 
 const app = express();
 
@@ -22,13 +22,13 @@ app.use(compression());
 app.use(express.json());
 app.use(morgan('combined', { stream: { write: msg => logger.info(msg.trim()) } }));
 
-// Rate limit básico
+// Rate limit
 app.use(rateLimit({
   windowMs: 60 * 1000,
   max: 60
 }));
 
-// Healthcheck super rápido
+// Health route (sempre rápido)
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
 // INPI patents route
@@ -36,7 +36,7 @@ app.get('/api/data/inpi/patents', async (req, res) => {
   const { medicine } = req.query;
   if (!medicine) return res.status(400).json({ success: false, message: 'Missing medicine parameter' });
 
-  const crawler = new InpiCrawler(); // sem mexer em credenciais, assume padrão
+  const crawler = new InpiCrawler();
   try {
     await crawler.initialize();
     const patents = await crawler.searchPatents(medicine);
@@ -44,6 +44,24 @@ app.get('/api/data/inpi/patents', async (req, res) => {
   } catch (err) {
     logger.error('INPI crawler failed', err);
     res.status(500).json({ success: false, error: 'Failed to fetch INPI patents', message: err.message });
+  } finally {
+    await crawler.close();
+  }
+});
+
+// PatentScope patents route (OCR / refatorado)
+app.get('/api/data/patentscope/patents', async (req, res) => {
+  const { medicine } = req.query;
+  if (!medicine) return res.status(400).json({ success: false, message: 'Missing medicine parameter' });
+
+  const crawler = new PatentScopeCrawler();
+  try {
+    await crawler.initialize();
+    const patents = await crawler.searchPatents(medicine);
+    res.json({ success: true, data: patents });
+  } catch (err) {
+    logger.error('PatentScope crawler failed', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch PatentScope patents', message: err.message });
   } finally {
     await crawler.close();
   }
