@@ -71,3 +71,5 @@ async function searchPatents(medicine) {
 
 module.exports = { search: searchPatents };
 
+
+
