@@ -18,7 +18,6 @@ class PatentScopeCrawler {
           "--single-process",
         ],
       });
-      console.log("✅ PatentScope browser initialized");
     }
   }
 
@@ -26,45 +25,51 @@ class PatentScopeCrawler {
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
-      console.log("✅ PatentScope browser closed");
     }
   }
 
   async search(medicine) {
-    if (!medicine) throw new Error("Medicine query is required");
-
     await this.initBrowser();
     const page = await this.browser.newPage();
 
     try {
-      console.log(`🔍 Searching PatentScope patents for: ${medicine}`);
+      console.log(`Searching PatentScope for: ${medicine}`);
+
       await page.goto("https://patentscope.wipo.int/search/en/search.jsf", {
         waitUntil: "networkidle2",
       });
 
+      // digita o termo e clica em buscar
       await page.type('input[name="query"]', medicine);
-
       await Promise.all([
         page.click('button[type="submit"]'),
         page.waitForNavigation({ waitUntil: "networkidle2" }),
       ]);
 
-      const results = await page.evaluate(() => {
-        return Array.from(document.querySelectorAll(".resultItem")).map((item) => ({
-          title: item.querySelector(".resultTitle")?.innerText || "",
-          publicationNumber: item.querySelector(".publicationNumber")?.innerText || "",
-          link: item.querySelector("a")?.href || "",
-        }));
+      // Espera o container de resultados
+      await page.waitForSelector(".resultItem, #resultList", { timeout: 10000 });
+
+      // 🔹 Extrai o HTML bruto da página de resultados (não OCR)
+      const html = await page.content();
+
+      // 🔹 (opcional) Pega também o link da primeira patente, se quiser analisar depois
+      const firstLink = await page.evaluate(() => {
+        const a = document.querySelector(".resultItem a, a.resultTitle");
+        return a ? a.href : null;
       });
 
-      return results;
+      return {
+        html,
+        firstLink,
+        source: "patentscope",
+      };
     } catch (err) {
-      console.error("❌ PatentScope crawler error:", err);
-      throw err;
+      console.error("PatentScope crawler error:", err);
+      return { error: err.message, source: "patentscope" };
     } finally {
       await page.close();
     }
   }
 }
 
-module.exports = PatentScopeCrawler; // exporta a classe
+module.exports = new PatentScopeCrawler();
